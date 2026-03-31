@@ -6,11 +6,6 @@
 [![GitHub Forks](https://img.shields.io/github/forks/yourusername/jetwash-platform?style=social)](https://github.com/yourusername/jetwash-platform/network/members)
 [![GitHub Issues](https://img.shields.io/github/issues/yourusername/jetwash-platform)](https://github.com/yourusername/jetwash-platform/issues)
 
-<div align="center">
-  <h3>⭐ Star History</h3>
-  <img src="https://api.star-history.com/svg?repos=yourusername/jetwash-platform&type=Date" alt="Star History Chart" />
-</div>
-
 ---
 
 A multi-tenant sensitive word filtering and text moderation SaaS platform built with Go, featuring a three-layer funnel architecture for comprehensive text review:
@@ -216,5 +211,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 <div align="center">
-  <sub>Built with ❤️ by Jetwash Team</sub>
+  <h3>⭐ Star History</h3>
+  <img src="https://api.star-history.com/svg?repos=yourusername/jetwash-platform&type=Date" alt="Star History Chart" />
+</div>
+
+<div align="center">
+  <sub>Built with ❤️ by Wenhao</sub>
 </div>
