@@ -2,9 +2,9 @@
 
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8E?style=flat&logo=go)](https://golang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/wenhao/jetwash?style=social)](https://github.com/wenhao/jetwash/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/wenhao/jetwash?style=social)](https://github.com/wenhao/jetwash/network/members)
-[![GitHub Issues](https://img.shields.io/github/issues/wenhao/jetwash)](https://github.com/wenhao/jetwash/issues) 
+[![GitHub Stars](https://img.shields.io/github/stars/wenhaooooo/jetwash?style=social)](https://github.com/wenhaooooo/jetwash/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/wenhaooooo/jetwash?style=social)](https://github.com/wenhaooooo/jetwash/network/members)
+[![GitHub Issues](https://img.shields.io/github/issues/wenhaooooo/jetwash)](https://github.com/wenhaooooo/jetwash/issues) 
 
 ---
 
