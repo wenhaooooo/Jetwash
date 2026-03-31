@@ -1,10 +1,10 @@
-# Jetwash Platform
+# Jetwash
 
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8E?style=flat&logo=go)](https://golang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/yourusername/jetwash-platform?style=social)](https://github.com/yourusername/jetwash-platform/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/yourusername/jetwash-platform?style=social)](https://github.com/yourusername/jetwash-platform/network/members)
-[![GitHub Issues](https://img.shields.io/github/issues/yourusername/jetwash-platform)](https://github.com/yourusername/jetwash-platform/issues)
+[![GitHub Stars](https://img.shields.io/github/stars/wenhao/jetwash?style=social)](https://github.com/wenhao/jetwash/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/wenhao/jetwash?style=social)](https://github.com/wenhao/jetwash/network/members)
+[![GitHub Issues](https://img.shields.io/github/issues/wenhao/jetwash)](https://github.com/wenhao/jetwash/issues) 
 
 ---
 
@@ -212,7 +212,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 <div align="center">
   <h3>⭐ Star History</h3>
-  <img src="https://api.star-history.com/svg?repos=wenhao/jetwash-platform&type=Date" alt="Star History Chart" />
+  <img src="https://api.star-history.com/svg?repos=wenhao/jetwash&type=Date" alt="Star History Chart" />
 </div>
 
 <div align="center">

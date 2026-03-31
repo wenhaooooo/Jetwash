@@ -1,10 +1,10 @@
-# Jetwash 平台
+# Jetwash
 
 [![Go 版本](https://img.shields.io/badge/Go-1.25+-00ADD8E?style=flat&logo=go)](https://golang.org/)
 [![许可证](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/yourusername/jetwash-platform?style=social)](https://github.com/yourusername/jetwash-platform/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/yourusername/jetwash-platform?style=social)](https://github.com/yourusername/jetwash-platform/network/members)
-[![GitHub Issues](https://img.shields.io/github/issues/yourusername/jetwash-platform)](https://github.com/yourusername/jetwash-platform/issues)
+[![GitHub Stars](https://img.shields.io/github/stars/wenhao/jetwash-platform?style=social)](https://github.com/wenhao/jetwash-platform/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/wenhao/jetwash-platform?style=social)](https://github.com/wenhao/jetwash-platform/network/members)
+[![GitHub Issues](https://img.shields.io/github/issues/wenhao/jetwash-platform)](https://github.com/wenhao/jetwash-platform/issues)
 
 ---
 
@@ -216,7 +216,7 @@ go build -o bin/server cmd/server/main.go
 
 <div align="center">
   <h3>⭐ Star 趋势</h3>
-  <img src="https://api.star-history.com/svg?repos=wenhao/jetwash-platform&type=Date" alt="Star 趋势图表" />
+  <img src="https://api.star-history.com/svg?repos=wenhao/jetwash&type=Date" alt="Star 趋势图表" />
 </div>
 
 <div align="center">
