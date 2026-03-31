@@ -1,0 +1,32 @@
+server:
+  port: 13142
+  mode: debug  # debug, release
+  read_timeout: 300
+  write_timeout: 300
+
+database:
+  host: localhost
+  port: 15432
+  user: postgres
+  password: 123456
+  dbname: jetwash
+  sslmode: disable
+  max_open_conns: 100
+  max_idle_conns: 10
+
+llm:
+  ollama:
+    host: "http://localhost"
+    port: 11434
+    embedding_model: "nomic-embed-text:v1.5"
+    reasoning_model: "qwen2.5:0.5b"
+  online:
+    api_key: "your-api-key"
+    model: "glm-4.7"
+    base_url: "https://open.bigmodel.cn/api/paas/v4"
+    embedding_model: "embedding-3"
+  provider: "ollama"  # online, ollama
+
+jwt:
+  secret: "jetwash-jwt-secret"
+  expire_hour: 24
