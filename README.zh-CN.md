@@ -2,9 +2,6 @@
 
 [![Go 版本](https://img.shields.io/badge/Go-1.25+-00ADD8E?style=flat&logo=go)](https://golang.org/)
 [![许可证](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/wenhaooooo/jetwash?style=social)](https://github.com/wenhaooooo/jetwash/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/wenhaooooo/jetwash?style=social)](https://github.com/wenhaooooo/jetwash/network/members)
-[![GitHub Issues](https://img.shields.io/github/issues/wenhaooooo/jetwash)](https://github.com/wenhaooooo/jetwash/issues)
 
 ---
 

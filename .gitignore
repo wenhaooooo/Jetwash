@@ -46,3 +46,6 @@ logs/
 
 # migrations
 migrations/
+
+# docs
+docs/*.csv
