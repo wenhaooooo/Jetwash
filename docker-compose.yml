@@ -7,10 +7,10 @@ services:
     container_name: jetwash-postgres
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: jetwashpostgres
       POSTGRES_DB: jetwash
     ports:
-      - "5432:5432"
+      - "15432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -19,6 +19,16 @@ services:
       timeout: 5s
       retries: 5
 
+  # Ollama 服务
+  ollama:
+    image: ollama/ollama:latest
+    container_name: jetwash-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+
   # Jetwash Platform 应用
   app:
     build:
@@ -26,7 +36,7 @@ services:
       dockerfile: Dockerfile
     container_name: jetwash
     ports:
-      - "8080:8080"
+      - "13142:13142"
     environment:
       - GIN_MODE=release
     volumes:
@@ -38,4 +48,6 @@ services:
 
 volumes:
   postgres_data:
+    driver: local
+  ollama_models:
     driver: local
