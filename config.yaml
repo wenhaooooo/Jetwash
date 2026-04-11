@@ -8,7 +8,7 @@ database:
   host: localhost
   port: 15432
   user: postgres
-  password: 123456
+  password: jetwashpostgres
   dbname: jetwash
   sslmode: disable
   max_open_conns: 100
@@ -30,3 +30,8 @@ llm:
 jwt:
   secret: "jetwash-jwt-secret"
   expire_hour: 24
+
+redis:
+  addr: "localhost:16379"
+  password: "jetwash-redis"
+  db: 0

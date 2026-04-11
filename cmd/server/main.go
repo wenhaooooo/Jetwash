@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"jetwash/internal/cache"
 	"jetwash/internal/config"
 	"jetwash/internal/handler"
 	"jetwash/internal/logger"
@@ -23,6 +24,7 @@ import (
 	"jetwash/internal/service/layer3_reason"
 	"jetwash/internal/service/normal"
 	"jetwash/internal/service/orchestrator"
+	"jetwash/internal/service/queue"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -63,6 +65,10 @@ func main() {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 
+	// 初始化Redis客户端
+	redisClient := cache.NewRedisClient(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, logger.GetLogger())
+	defer redisClient.Close()
+
 	// 初始化 Repository 层
 	tenantRepo := repository.NewTenantRepository(db)
 	wordRepo := repository.NewWordRepository(db)
@@ -102,7 +108,17 @@ func main() {
 	}
 
 	// 初始化 Orchestrator: 编排层
-	orchestratorService := orchestrator.NewOrchestrator(layer1Service, layer2Service, layer3Service, wordRepo, detectionHistoryService)
+	orchestratorService := orchestrator.NewOrchestrator(layer1Service, layer2Service, layer3Service, wordRepo, detectionHistoryService, redisClient)
+
+	// 初始化队列服务
+	queueService := queue.NewQueueService(redisClient)
+
+	// 启动队列处理
+	go func() {
+		if err := queueService.Process(context.Background(), orchestratorService); err != nil {
+			logger.Error("Queue processing error", zap.Error(err))
+		}
+	}()
 
 	// 初始化服务层
 	apiKeyService := api_key.NewAPIKeyService(apiKeyRepo)

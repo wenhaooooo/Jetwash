@@ -13,6 +13,7 @@ type Config struct {
 	Database DatabaseConfig `mapstructure:"database"`
 	LLM      LLMConfig      `mapstructure:"llm"`
 	JWT      JWTConfig      `mapstructure:"jwt"`
+	Redis    RedisConfig    `mapstructure:"redis"`
 }
 
 // ServerConfig 服务器配置
@@ -58,6 +59,13 @@ type OnlineConfig struct {
 type JWTConfig struct {
 	Secret     string `mapstructure:"secret"`
 	ExpireHour int    `mapstructure:"expire_hour"`
+}
+
+// RedisConfig Redis配置
+type RedisConfig struct {
+	Addr     string `mapstructure:"addr"`
+	Password string `mapstructure:"password"`
+	DB       int    `mapstructure:"db"`
 }
 
 // LoadConfig 加载配置文件
@@ -112,6 +120,11 @@ func setDefaults() {
 
 	// LLM 提供者默认配置
 	viper.SetDefault("llm.provider", "online")
+
+	// Redis 默认配置
+	viper.SetDefault("redis.addr", "localhost:6379")
+	viper.SetDefault("redis.password", "")
+	viper.SetDefault("redis.db", 0)
 }
 
 // GetDSN 获取数据库连接字符串

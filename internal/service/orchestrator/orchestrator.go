@@ -1,11 +1,15 @@
 package orchestrator
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
+	"jetwash/internal/cache"
 	"jetwash/internal/repository"
 	"jetwash/internal/service/detection_history"
 	"jetwash/internal/service/layer1_speed"
@@ -51,6 +55,7 @@ type orchestrator struct {
 	layer3Service           layer3_reason.Layer3Service
 	wordRepo                repository.WordRepository
 	detectionHistoryService detection_history.DetectionHistoryService
+	redisClient             *cache.RedisClient
 }
 
 // NewOrchestrator 创建编排器实例
@@ -60,6 +65,7 @@ func NewOrchestrator(
 	layer3Service layer3_reason.Layer3Service,
 	wordRepo repository.WordRepository,
 	detectionHistoryService detection_history.DetectionHistoryService,
+	redisClient *cache.RedisClient,
 ) Orchestrator {
 	return &orchestrator{
 		layer1Service:           layer1Service,
@@ -67,6 +73,7 @@ func NewOrchestrator(
 		layer3Service:           layer3Service,
 		wordRepo:                wordRepo,
 		detectionHistoryService: detectionHistoryService,
+		redisClient:             redisClient,
 	}
 }
 
@@ -88,9 +95,21 @@ func (o *orchestrator) CheckTextWithContext(tenantID uuid.UUID, text string, con
 }
 
 // CheckTextWithConfigAndContext 使用配置和上下文检查文本
-func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text string, config *types.OrchestratorConfig, context *layer3_reason.ReasonContext) (*types.OrchestratorResult, error) {
+func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text string, config *types.OrchestratorConfig, reasonContext *layer3_reason.ReasonContext) (*types.OrchestratorResult, error) {
 	if text == "" {
 		return nil, fmt.Errorf("text cannot be empty")
+	}
+
+	// 尝试从缓存获取结果
+	if o.redisClient != nil {
+		cacheKey := fmt.Sprintf("detection:%s:%s", tenantID, text)
+		cachedResult, err := o.redisClient.Get(context.Background(), cacheKey)
+		if err == nil {
+			var result types.OrchestratorResult
+			if err := json.Unmarshal([]byte(cachedResult), &result); err == nil {
+				return &result, nil
+			}
+		}
 	}
 
 	startTime := time.Now()
@@ -116,6 +135,14 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 		duration := time.Since(startTime).Milliseconds()
 		if o.detectionHistoryService != nil {
 			_ = o.detectionHistoryService.SaveDetectionHistory(tenantID, text, mode, result, duration)
+		}
+
+		// 缓存结果
+		if o.redisClient != nil {
+			cacheKey := fmt.Sprintf("detection:%s:%s", tenantID, text)
+			if cachedResult, err := json.Marshal(result); err == nil {
+				o.redisClient.Set(context.Background(), cacheKey, cachedResult, 1*time.Hour)
+			}
 		}
 	}()
 
@@ -143,8 +170,8 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 		config = defaultConfig
 	}
 
-	if context == nil {
-		context = layer3_reason.NewReasonContext()
+	if reasonContext == nil {
+		reasonContext = layer3_reason.NewReasonContext()
 	}
 
 	// 初始化Layer1 AC自动机，加载租户的敏感词
@@ -164,13 +191,59 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 		o.layer1Service.RegisterSegmenterWords(wordTexts)
 	}
 
+	// 并发执行Layer1和Layer2
+	var wg sync.WaitGroup
+	var layer1Err, layer2Err error
+	var layer1Result *layer1_speed.Layer1Result
+	var layer2Result *layer2_semantic.Layer2Result
+
 	// Layer 1: 快速匹配层
 	if config.EnableLayer1 {
-		layer1Result, err := o.layer1Service.CheckText(tenantID, text)
-		if err != nil {
-			return nil, fmt.Errorf("layer1 check failed: %w", err)
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err := o.layer1Service.CheckText(tenantID, text)
+			if err != nil {
+				layer1Err = fmt.Errorf("layer1 check failed: %w", err)
+				return
+			}
+			layer1Result = result
+		}()
+	}
 
+	// Layer 2: 语义检索层
+	if config.EnableLayer2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err := o.layer2Service.SemanticSearch(
+				tenantID,
+				text,
+				config.Layer2Threshold,
+				config.Layer2Limit,
+				nil, // filters
+			)
+			if err != nil {
+				layer2Err = fmt.Errorf("layer2 check failed: %w", err)
+				return
+			}
+			layer2Result = result
+		}()
+	}
+
+	// 等待Layer1和Layer2完成
+	wg.Wait()
+
+	// 检查错误
+	if layer1Err != nil {
+		return nil, layer1Err
+	}
+	if layer2Err != nil {
+		return nil, layer2Err
+	}
+
+	// 处理Layer1结果
+	if config.EnableLayer1 && layer1Result != nil {
 		result.Layer1Result = layer1Result
 		result.TotalMatches += len(layer1Result.MatchedWords)
 
@@ -192,19 +265,8 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 		}
 	}
 
-	// Layer 2: 语义检索层
-	if config.EnableLayer2 {
-		layer2Result, err := o.layer2Service.SemanticSearch(
-			tenantID,
-			text,
-			config.Layer2Threshold,
-			config.Layer2Limit,
-			nil, // filters
-		)
-		if err != nil {
-			return nil, fmt.Errorf("layer2 check failed: %w", err)
-		}
-
+	// 处理Layer2结果
+	if config.EnableLayer2 && layer2Result != nil {
 		result.Layer2Result = layer2Result
 		result.TotalMatches += layer2Result.TotalMatches
 
@@ -239,7 +301,7 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 		}
 
 		// 调用推理层
-		layer3Result, err := o.layer3Service.ReasonWithMatches(tenantID, text, matches, context)
+		layer3Result, err := o.layer3Service.ReasonWithMatches(tenantID, text, matches, reasonContext)
 		if err != nil {
 			return nil, fmt.Errorf("layer3 check failed: %w", err)
 		}
