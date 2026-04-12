@@ -105,7 +105,7 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 	// 尝试从缓存获取结果
 	if o.redisClient != nil {
 		cacheKey := fmt.Sprintf("detection:%s:%s", tenantID, text)
-		cachedResult, err := o.redisClient.Get(context.Background(), cacheKey)
+		cachedResult, err := o.redisClient.GetWithRefresh(context.Background(), cacheKey, 1*time.Hour)
 		if err == nil {
 			var result types.OrchestratorResult
 			if err := json.Unmarshal([]byte(cachedResult), &result); err == nil {
@@ -152,7 +152,9 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 		if o.redisClient != nil {
 			cacheKey := fmt.Sprintf("detection:%s:%s", tenantID, text)
 			if cachedResult, err := json.Marshal(result); err == nil {
-				o.redisClient.Set(context.Background(), cacheKey, cachedResult, 1*time.Hour)
+				// 分层缓存策略：根据检测结果风险等级设置不同的过期时间
+				ttl := o.getCacheTTL(result)
+				o.redisClient.Set(context.Background(), cacheKey, cachedResult, ttl)
 			}
 		}
 	}()
@@ -507,5 +509,20 @@ func (o *orchestrator) addDetectedWordsToRedis(tenantID uuid.UUID, words []strin
 
 		// 设置过期时间为7天（与数据库同步频率一致）
 		o.redisClient.Expire(ctx, sensitiveWordsKey, 7*24*time.Hour)
+	}
+}
+
+// getCacheTTL 根据检测结果的风险等级返回合适的缓存过期时间
+// 分层缓存策略：高风险结果保留更长时间用于审计，低风险结果保留较短时间
+func (o *orchestrator) getCacheTTL(result *types.OrchestratorResult) time.Duration {
+	if !result.Passed && result.RiskLevel >= 4 {
+		// 高风险结果，保留7天（用于审计和合规）
+		return 7 * 24 * time.Hour
+	} else if !result.Passed {
+		// 中等风险结果，保留1天
+		return 24 * time.Hour
+	} else {
+		// 通过结果，保留1小时
+		return 1 * time.Hour
 	}
 }

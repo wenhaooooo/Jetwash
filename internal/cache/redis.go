@@ -42,6 +42,22 @@ func (r *RedisClient) Get(ctx context.Context, key string) (string, error) {
 	return r.client.Get(ctx, key).Result()
 }
 
+// GetWithRefresh 获取缓存并刷新过期时间
+// 当缓存命中时，自动将过期时间延长为新的 expiration
+func (r *RedisClient) GetWithRefresh(ctx context.Context, key string, expiration time.Duration) (string, error) {
+	result, err := r.client.Get(ctx, key).Result()
+	if err != nil {
+		return "", err
+	}
+	
+	// 异步刷新过期时间（不阻塞主流程）
+	go func() {
+		r.client.Expire(ctx, key, expiration)
+	}()
+	
+	return result, nil
+}
+
 func (r *RedisClient) Del(ctx context.Context, keys ...string) error {
 	return r.client.Del(ctx, keys...).Err()
 }

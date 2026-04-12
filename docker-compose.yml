@@ -23,7 +23,14 @@ services:
     container_name: jetwash-redis
     environment:
       REDIS_PASSWORD: jetwash-redis
-    command: ["redis-server", "--requirepass", "jetwash-redis"]
+    command: 
+      - "redis-server"
+      - "--requirepass"
+      - "jetwash-redis"
+      - "--maxmemory"
+      - "512mb"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
     ports:
       - "16379:6379"
     volumes:

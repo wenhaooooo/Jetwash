@@ -28,6 +28,7 @@ func main() {
 	testText := flag.String("text", "This is a test text for performance benchmarking", "Test text to check")
 	queueTest := flag.Bool("queue", false, "Run queue benchmark instead of direct benchmark")
 	configPath := flag.String("config", "config.yaml", "Path to config file")
+	mode := flag.String("mode", "full", "Detection mode: full, basic (layer1 only), semantic (layer1+layer2)")
 	flag.Parse()
 
 	// 加载配置
@@ -116,14 +117,28 @@ func main() {
 		}
 		benchmark.PrintResult(result)
 	} else {
+		// 根据模式创建配置
+		orchConfig := orchestrator.DefaultOrchestratorConfig()
+		switch *mode {
+		case "basic":
+			orchConfig.EnableLayer2 = false
+			orchConfig.EnableLayer3 = false
+		case "semantic":
+			orchConfig.EnableLayer3 = false
+		case "full":
+			// 默认配置，所有层都启用
+		default:
+			fmt.Printf("Unknown mode: %s, using full mode\n", *mode)
+		}
+
 		// 运行直接性能测试
-		fmt.Println("Running direct benchmark...")
+		fmt.Printf("Running direct benchmark in %s mode...\n", *mode)
 		benchmarkConfig := benchmark.BenchmarkConfig{
 			TotalRequests:      *totalRequests,
 			ConcurrentRequests: *concurrentRequests,
 			TestText:           *testText,
 			TenantID:           tenantID,
-			Config:             orchestrator.DefaultOrchestratorConfig(),
+			Config:             orchConfig,
 		}
 
 		result, err := benchmark.RunBenchmark(

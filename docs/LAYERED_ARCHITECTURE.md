@@ -434,9 +434,10 @@ result, err := orchestrator.CheckText(tenantID, "这是一段文本")
 
 ### 功能
 
-- **检测结果缓存**：缓存检测结果，TTL = 1 小时
+- **检测结果缓存**：缓存检测结果，支持分层缓存策略和访问刷新机制
 - **敏感词缓存**：缓存敏感词集合，TTL = 7 天
 - **异步队列**：基于 Redis List 的消息队列，用于高并发场景
+- **内存保护**：配置 LRU 淘汰策略，防止内存溢出
 
 ### 核心组件
 
@@ -450,6 +451,9 @@ type RedisClient struct {
 // 缓存操作
 func (r *RedisClient) Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error
 func (r *RedisClient) Get(ctx context.Context, key string) (string, error)
+
+// 带刷新的缓存获取（访问时自动延长过期时间）
+func (r *RedisClient) GetWithRefresh(ctx context.Context, key string, expiration time.Duration) (string, error)
 
 // 集合操作（用于敏感词）
 func (r *RedisClient) SAdd(ctx context.Context, key string, members ...interface{}) error
@@ -465,10 +469,67 @@ func (r *RedisClient) BRPop(ctx context.Context, timeout time.Duration, keys ...
 
 | 键类型 | 键格式 | TTL | 说明 |
 |--------|--------|-----|------|
-| 检测结果 | `detection:{tenantID}:{hash}` | 1 小时 | 缓存检测结果 |
+| 检测结果 | `detection:{tenantID}:{hash}` | 分层策略 | 缓存检测结果，根据风险等级动态调整 |
 | 敏感词集合 | `sensitive_words:{tenantID}` | 7 天 | 租户敏感词集合 |
 | 队列 | `queue:detection` | - | 异步检测队列 |
 | 队列结果 | `queue:result:{taskID}` | 24 小时 | 队列任务结果 |
+
+### 分层缓存策略
+
+根据检测结果的风险等级设置不同的缓存过期时间：
+
+| 结果类型 | 风险等级 | TTL | 说明 |
+|----------|----------|-----|------|
+| 高风险 | >= 4 | 7 天 | 用于审计和合规 |
+| 中等风险 | 1-3 | 1 天 | 普通风险结果 |
+| 通过 | 0 | 1 小时 | 无风险结果 |
+
+```go
+func getCacheTTL(result *OrchestratorResult) time.Duration {
+    if !result.Passed && result.RiskLevel >= 4 {
+        return 7 * 24 * time.Hour  // 高风险：7天
+    } else if !result.Passed {
+        return 24 * time.Hour       // 中等风险：1天
+    } else {
+        return 1 * time.Hour        // 通过：1小时
+    }
+}
+```
+
+### 访问刷新机制
+
+当缓存命中时，自动延长过期时间，确保热门数据持续保留：
+
+```go
+func (r *RedisClient) GetWithRefresh(ctx context.Context, key string, expiration time.Duration) (string, error) {
+    result, err := r.client.Get(ctx, key).Result()
+    if err != nil {
+        return "", err
+    }
+    
+    // 异步刷新过期时间（不阻塞主流程）
+    go func() {
+        r.client.Expire(ctx, key, expiration)
+    }()
+    
+    return result, nil
+}
+```
+
+### Redis LRU 淘汰策略
+
+为防止内存溢出，配置 Redis 内存限制和 LRU 淘汰策略：
+
+```yaml
+redis:
+  maxmemory: 512mb
+  maxmemory-policy: allkeys-lru
+```
+
+**配置说明：**
+- `maxmemory`: 内存上限，当达到此限制时触发淘汰
+- `maxmemory-policy`: 淘汰策略，`allkeys-lru` 表示淘汰最久未使用的键
+- 配合访问刷新机制，热门数据会被持续保留，冷门数据会被自动淘汰
 
 ## HTTP 接口
 
@@ -691,6 +752,7 @@ redis:
    - 使用 AC 自动机实现 O(n) 时间复杂度的匹配
    - 文本规范化预处理减少重复计算
    - 支持 tenant_id 隔离，避免跨租户干扰
+   - 扩展服务支持正则、模糊、多语言匹配
 
 2. **Layer2 优化**
    - 使用 pgvector 索引加速向量检索
@@ -701,14 +763,23 @@ redis:
    - 缓存 LLM 响应
    - 批量处理请求
    - 使用流式响应减少延迟
+   - 启用自动学习功能，自动扩展敏感词库
 
 4. **缓存优化**
-   - 使用 Redis 缓存检测结果，减少重复计算
+   - **分层缓存策略**：根据风险等级设置不同 TTL（高风险7天，中风险1天，通过1小时）
+   - **访问刷新机制**：缓存命中时自动延长过期时间，热门数据持续保留
+   - **LRU 淘汰策略**：配置 Redis 内存上限和 LRU 淘汰，防止内存溢出
    - 设置合理的 TTL，平衡缓存命中率和数据新鲜度
 
 5. **异步处理**
    - 高并发场景使用异步队列
    - 后台消费队列任务，异步返回结果
+
+6. **Benchmark 测试**
+   - 使用 `cmd/benchmark/main.go` 进行性能测试
+   - 支持 `-mode` 参数选择检测模式（basic/semantic/full）
+   - 支持 `-concurrent` 参数设置并发数
+   - 支持 `-total` 参数设置总请求数
 
 ## 扩展建议
 

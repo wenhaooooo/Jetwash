@@ -603,7 +603,73 @@ GET /api/v1/tenants?page=1&page_size=20
 
 ---
 
-## 9. 批量导入文件格式
+## 9. 缓存策略
+
+### 9.1 分层缓存策略
+
+系统根据检测结果的风险等级设置不同的缓存过期时间：
+
+| 结果类型 | 风险等级 | TTL | 说明 |
+|----------|----------|-----|------|
+| 高风险 | >= 4 | 7 天 | 用于审计和合规 |
+| 中等风险 | 1-3 | 1 天 | 普通风险结果 |
+| 通过 | 0 | 1 小时 | 无风险结果 |
+
+### 9.2 访问刷新机制
+
+当缓存命中时，系统自动延长过期时间（异步执行，不阻塞主流程），确保热门数据持续保留。
+
+### 9.3 Redis LRU 淘汰策略
+
+系统配置了 Redis 内存保护机制：
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| maxmemory | 512mb | 内存上限 |
+| maxmemory-policy | allkeys-lru | 淘汰最久未使用的键 |
+
+---
+
+## 10. 性能测试工具
+
+### 10.1 使用方式
+
+```bash
+# 基本用法
+go run cmd/benchmark/main.go -total 1000 -concurrent 100
+
+# 指定检测模式
+go run cmd/benchmark/main.go -total 1000 -concurrent 100 -mode basic
+
+# 指定测试文本
+go run cmd/benchmark/main.go -total 1000 -concurrent 100 -text "测试文本"
+
+# 使用队列模式
+go run cmd/benchmark/main.go -total 1000 -concurrent 100 -queue
+```
+
+### 10.2 参数说明
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|-------|------|
+| -total | int | 1000 | 总请求数 |
+| -concurrent | int | 100 | 并发请求数 |
+| -mode | string | full | 检测模式（basic/semantic/full） |
+| -text | string | 测试文本 | 待检测文本 |
+| -queue | bool | false | 是否使用队列模式 |
+| -config | string | config.yaml | 配置文件路径 |
+
+### 10.3 检测模式说明
+
+| 模式 | 说明 | 性能 |
+|------|------|------|
+| basic | 仅 Layer1（AC自动机） | 最快（QPS ~3000） |
+| semantic | Layer1 + Layer2（语义检索） | 中等 |
+| full | 完整三层检测 | 最慢（QPS ~2） |
+
+---
+
+## 11. 批量导入文件格式
 
 批量导入敏感词支持 CSV 格式，文件格式如下：
 
