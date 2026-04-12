@@ -10,6 +10,7 @@ import (
 	"jetwash/internal/middleware"
 	"jetwash/internal/service/detection_history"
 	"jetwash/internal/service/layer3_reason"
+	"jetwash/internal/service/orchestrator"
 	"jetwash/internal/types"
 )
 
@@ -30,6 +31,7 @@ func NewOrchestratorHandler(orchestrator interface{}, detectionHistoryService de
 // OrchestratorCheckTextRequest 编排器检查文本请求
 type OrchestratorCheckTextRequest struct {
 	Text string `json:"text" binding:"required"`
+	Mode string `json:"mode"` // 检测模式：basic, semantic, full（默认 full）
 }
 
 // OrchestratorCheckTextResponse 编排器检查文本响应
@@ -39,7 +41,7 @@ type OrchestratorCheckTextResponse struct {
 	Data    *types.OrchestratorResult `json:"data"`
 }
 
-// CheckText 检查文本
+// CheckText 检查文本（支持模式选择）
 func (h *OrchestratorHandler) CheckText(c *gin.Context) {
 	var req OrchestratorCheckTextRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -71,9 +73,12 @@ func (h *OrchestratorHandler) CheckText(c *gin.Context) {
 		return
 	}
 
+	// 根据 mode 参数构建检测配置
+	config := h.buildConfigFromMode(req.Mode)
+
 	result, err := h.orchestrator.(interface {
-		CheckText(tenantID uuid.UUID, text string) (*types.OrchestratorResult, error)
-	}).CheckText(tenantID, req.Text)
+		CheckTextWithConfig(tenantID uuid.UUID, text string, config *types.OrchestratorConfig) (*types.OrchestratorResult, error)
+	}).CheckTextWithConfig(tenantID, req.Text, config)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, OrchestratorCheckTextResponse{
 			Code:    500,
@@ -88,6 +93,28 @@ func (h *OrchestratorHandler) CheckText(c *gin.Context) {
 		Message: "Success",
 		Data:    result,
 	})
+}
+
+// buildConfigFromMode 根据模式构建检测配置
+func (h *OrchestratorHandler) buildConfigFromMode(mode string) *types.OrchestratorConfig {
+	config := orchestrator.DefaultOrchestratorConfig()
+
+	switch mode {
+	case "basic":
+		// 仅 Layer1：快速匹配（AC自动机）
+		config.EnableLayer2 = false
+		config.EnableLayer3 = false
+	case "semantic":
+		// Layer1 + Layer2：快速匹配 + 语义检索
+		config.EnableLayer3 = false
+	case "full":
+		// 默认：完整三层检测
+		// 所有层都启用
+	default:
+		// 默认使用 full 模式
+	}
+
+	return config
 }
 
 // CheckTextWithConfigRequest 使用配置检查文本请求

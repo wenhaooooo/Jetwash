@@ -533,7 +533,7 @@ redis:
 
 ## HTTP 接口
 
-### 基础检查接口
+### 基础检查接口（支持模式选择）
 
 ```bash
 POST /api/v1/orchestrator/check
@@ -541,9 +541,25 @@ Content-Type: application/json
 X-API-Key: your-api-key
 
 {
-  "text": "这是一段文本"
+  "text": "这是一段文本",
+  "mode": "basic"  # 可选：basic, semantic, full（默认 full）
 }
 ```
+
+**请求参数：**
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|-------|------|
+| text | string | 是 | - | 需要检测的文本内容 |
+| mode | string | 否 | full | 检测模式 |
+
+**检测模式说明：**
+
+| 模式 | 启用层 | 性能（参考） | 适用场景 |
+|------|--------|-------------|----------|
+| basic | Layer1（AC自动机） | 最快（QPS ~3000） | 高并发、低延迟场景 |
+| semantic | Layer1 + Layer2（语义检索） | 中等 | 需要语义理解的场景 |
+| full | Layer1 + Layer2 + Layer3（LLM推理） | 最慢（QPS ~2） | 需要最高准确率的场景 |
 
 ### 带配置的检查接口
 
