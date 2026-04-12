@@ -23,8 +23,8 @@ import (
 
 func main() {
 	// 解析命令行参数
-	totalRequests := flag.Int("total", 100, "Total number of requests")
-	concurrentRequests := flag.Int("concurrent", 10, "Number of concurrent requests")
+	totalRequests := flag.Int("total", 1000, "Total number of requests")
+	concurrentRequests := flag.Int("concurrent", 100, "Number of concurrent requests")
 	testText := flag.String("text", "This is a test text for performance benchmarking", "Test text to check")
 	queueTest := flag.Bool("queue", false, "Run queue benchmark instead of direct benchmark")
 	configPath := flag.String("config", "config.yaml", "Path to config file")
