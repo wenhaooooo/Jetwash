@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
 	"jetwash/internal/cache"
+	"jetwash/internal/models"
 	"jetwash/internal/repository"
 	"jetwash/internal/service/detection_history"
 	"jetwash/internal/service/layer1_speed"
@@ -131,10 +133,19 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 		TotalMatches: 0,
 	}
 
+	// 存储新检测到的违禁词，用于后续添加到数据库和Redis
+	var newlyDetectedWords []string
+
 	defer func() {
 		duration := time.Since(startTime).Milliseconds()
 		if o.detectionHistoryService != nil {
 			_ = o.detectionHistoryService.SaveDetectionHistory(tenantID, text, mode, result, duration)
+		}
+
+		// 如果有新检测到的违禁词，添加到数据库和Redis
+		if len(newlyDetectedWords) > 0 {
+			o.addDetectedWordsToDatabase(tenantID, newlyDetectedWords)
+			o.addDetectedWordsToRedis(tenantID, newlyDetectedWords)
 		}
 
 		// 缓存结果
@@ -313,6 +324,11 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 			result.Passed = !layer3Result.IsApproved
 			result.RiskLevel = layer3Result.RiskLevel
 			result.Message = layer3Result.RiskReason
+
+			// 如果LLM检测到新的违禁词且判断文本有风险，记录这些违禁词
+			if len(layer3Result.DetectedWords) > 0 && !layer3Result.IsApproved {
+				newlyDetectedWords = layer3Result.DetectedWords
+			}
 		} else if maxRiskLevel >= 3 {
 			// 如果LLM判断无风险，但有中等风险匹配（风险等级>=3），仍然拒绝
 			result.Passed = false
@@ -432,4 +448,64 @@ func (o *orchestrator) BuildSummary(result *types.OrchestratorResult) string {
 	}
 
 	return summary
+}
+
+// addDetectedWordsToDatabase 将检测到的违禁词添加到数据库
+func (o *orchestrator) addDetectedWordsToDatabase(tenantID uuid.UUID, words []string) {
+	if o.wordRepo == nil {
+		return
+	}
+
+	for _, wordText := range words {
+		wordText = strings.TrimSpace(wordText)
+		if wordText == "" {
+			continue
+		}
+
+		// 检查违禁词是否已存在
+		exists, err := o.wordRepo.CheckWordExists(tenantID, wordText)
+		if err != nil {
+			continue
+		}
+		if exists {
+			continue
+		}
+
+		// 创建新的敏感词记录
+		newWord := &models.SensitiveWord{
+			TenantID:  tenantID,
+			WordText:  wordText,
+			Category:  "llm_detected", // 标记为LLM检测到的
+			RiskLevel: 3,              // 默认中等风险
+			Status:    1,              // 启用状态
+		}
+
+		if err := o.wordRepo.CreateSensitiveWord(newWord); err != nil {
+			continue
+		}
+	}
+}
+
+// addDetectedWordsToRedis 将检测到的违禁词添加到Redis缓存
+func (o *orchestrator) addDetectedWordsToRedis(tenantID uuid.UUID, words []string) {
+	if o.redisClient == nil {
+		return
+	}
+
+	ctx := context.Background()
+
+	// 更新敏感词列表缓存
+	for _, wordText := range words {
+		wordText = strings.TrimSpace(wordText)
+		if wordText == "" {
+			continue
+		}
+
+		// 添加到敏感词集合
+		sensitiveWordsKey := fmt.Sprintf("sensitive_words:%s", tenantID)
+		o.redisClient.SAdd(ctx, sensitiveWordsKey, wordText)
+
+		// 设置过期时间为7天（与数据库同步频率一致）
+		o.redisClient.Expire(ctx, sensitiveWordsKey, 7*24*time.Hour)
+	}
 }

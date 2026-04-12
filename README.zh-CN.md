@@ -43,6 +43,30 @@ Jetwash 是一个基于 Go 语言开发的多租户敏感词与文本风控 SaaS
 - Prompt 组合和上下文管理
 - 风险评估和建议生成
 - 支持本地（Ollama）和云端 LLM 提供者
+- **自动学习**：LLM 检测到违禁词时自动添加到敏感词库
+
+### ⚡ 性能优化
+
+#### Redis 缓存层
+- 检测结果缓存（TTL: 1小时）
+- 减少重复文本的计算开销
+- 支持租户级别的缓存隔离
+
+#### 异步检测队列
+- 基于 Redis List 的消息队列
+- 支持高并发场景的削峰填谷
+- 阻塞式出队（BRPop）避免空轮询
+- 任务结果缓存（TTL: 24小时）
+
+#### 并发优化
+- Layer1 和 Layer2 并发执行
+- 使用 goroutine 和 sync.WaitGroup 实现并发控制
+- 提升整体检测吞吐量
+
+#### 性能测试工具
+- 支持并发请求测试
+- 支持队列模式测试
+- 输出关键性能指标（QPS、平均延迟、P99延迟等）
 
 ### 📝 敏感词管理
 - 敏感词 CRUD 操作
@@ -69,6 +93,7 @@ Jetwash 是一个基于 Go 语言开发的多租户敏感词与文本风控 SaaS
 - **Web 框架**: Gin
 - **ORM**: GORM
 - **数据库**: PostgreSQL + pgvector
+- **缓存**: Redis
 - **配置管理**: Viper
 - **认证**: JWT
 - **LLM 支持**: Ollama, 在线（OpenAI 兼容 API）
@@ -77,8 +102,10 @@ Jetwash 是一个基于 Go 语言开发的多租户敏感词与文本风控 SaaS
 
 ```
 ├── cmd/
-│   └── server/              # main.go 入口
+│   ├── server/              # main.go 入口
+│   └── benchmark/           # 性能测试工具
 ├── internal/
+│   ├── cache/               # Redis 缓存客户端
 │   ├── config/              # Viper 配置定义
 │   ├── middleware/          # Gin 中间件（JWT 鉴权、限流）
 │   ├── models/              # GORM 数据表模型（实体）
@@ -90,30 +117,121 @@ Jetwash 是一个基于 Go 语言开发的多租户敏感词与文本风控 SaaS
 │       ├── layer2_semantic/ # 第二层：语义检索
 │       ├── layer3_reason/   # 第三层：LLM 推理
 │       ├── orchestrator/     # 编排层
+│       ├── queue/           # 异步检测队列
 │       ├── detection_history/# 检测历史服务
 │       └── api_key/         # API 密钥管理
 ├── pkg/
-│   ├── ecode/               # 统一定义的业务错误码
-│   └── logger/              # 日志封装
+│   ├── benchmark/           # 性能测试工具
+│   └── ecode/               # 统一定义的业务错误码
 ├── docs/
 │   ├── LAYERED_ARCHITECTURE.md  # 三层架构文档
 │   └── API_DOCUMENTATION.md       # API 文档
 ├── migrations/                 # 数据库迁移文件
 ├── config.yaml                # 配置文件
+├── docker-compose.yml         # Docker 编排配置
 ├── go.mod
 └── README.md
 ```
 
 ## 🚀 快速开始
 
-### 1. 环境准备
+### 方式一：Docker 部署（推荐）
+
+#### 1. 启动所有服务
+
+```bash
+# 启动 PostgreSQL、Redis、Ollama 服务
+docker-compose up -d
+
+# 查看服务状态
+docker-compose ps
+```
+
+#### 2. 安装 Ollama 模型
+
+```bash
+# 进入 Ollama 容器
+docker exec -it jetwash-ollama bash
+
+# 安装推理模型
+ollama pull qwen2.5:0.5b
+
+# 安装嵌入模型
+ollama pull nomic-embed-text:v1.5
+
+# 退出容器
+exit
+```
+
+#### 3. 配置应用
+
+编辑 `config.yaml` 文件：
+
+```yaml
+server:
+  port: 13142
+  mode: debug
+  read_timeout: 300
+  write_timeout: 300
+
+database:
+  host: localhost
+  port: 15432
+  user: postgres
+  password: jetwash-postgres
+  dbname: jetwash
+  sslmode: disable
+  max_open_conns: 100
+  max_idle_conns: 10
+
+redis:
+  addr: "localhost:16379"
+  password: "jetwash-redis"
+  db: 0
+
+llm:
+  ollama:
+    host: "http://localhost"
+    port: 11434
+    embedding_model: "nomic-embed-text:v1.5"
+    reasoning_model: "qwen2.5:0.5b"
+  online:
+    api_key: "your-api-key"
+    model: "glm-4.7"
+    base_url: "https://open.bigmodel.cn/api/paas/v4"
+    embedding_model: "embedding-3"
+  provider: "ollama"  # online, ollama
+
+jwt:
+  secret: "jetwash-jwt-secret"
+  expire_hour: 24
+```
+
+#### 4. 运行应用
+
+```bash
+# 下载依赖
+go mod tidy
+
+# 运行服务
+go run cmd/server/main.go
+
+# 或者编译后运行
+go build -o bin/jetwash cmd/server/main.go
+./bin/jetwash
+```
+
+### 方式二：手动部署
+
+#### 1. 环境准备
 
 确保已安装：
 
 - Go 1.25+
 - PostgreSQL 14+（需安装 pgvector 扩展）
+- Redis 7+
 
-### 2. 安装 pgvector 扩展
+#### 2. 安装 pgvector 扩展
 
 ```sql
 -- 连接到 PostgreSQL
@@ -129,46 +247,18 @@ CREATE DATABASE jetwash;
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-### 3. 配置数据库
+#### 3. 配置 Redis
 
-编辑 `config.yaml` 文件：
-
-```yaml
-server:
-  port: 13142
-  mode: debug  # debug, release
-  read_timeout: 300
-  write_timeout: 300
-
-database:
-  host: localhost
-  port: 15432
-  user: postgres
-  password: 123456
-  dbname: jetwash
-  sslmode: disable
-  max_open_conns: 100
-  max_idle_conns: 10
-
-llm:
-  ollama:
-    host: "http://localhost"
-    port: 11434
-    embedding_model: "nomic-embed-text:v1.5"
-    reasoning_model: "qwen2.5:0.5b"
-  online:
-    api_key: "your-api-key"
-    model: "glm-4.7"
-    base_url: "https://open.bigmodel.cn/api/paas/v4"
-    embedding_model: "embedding-3"
-  provider: "online"  # online, ollama
-
-jwt:
-  secret: "jetwash-jwt-secret"
-  expire_hour: 24
+```bash
+# 启动 Redis（带密码）
+redis-server --requirepass your-redis-password
 ```
 
-### 4. 运行服务
+#### 4. 配置应用
+
+编辑 `config.yaml` 文件，配置数据库和 Redis 连接信息。
+
+#### 5. 运行服务
 
 ```bash
 # 下载依赖
@@ -176,16 +266,41 @@ go mod tidy
 
 # 运行服务
 go run cmd/server/main.go
-
-# 或者编译后运行
-go build -o bin/server cmd/server/main.go
-./bin/server
 ```
 
 ## 📚 文档
 
 - [三层架构详细文档](./docs/LAYERED_ARCHITECTURE.md)
 - [API 文档](./docs/API_DOCUMENTATION.md)
+
+## 🧪 性能测试
+
+### 运行性能测试
+
+```bash
+# 编译性能测试工具
+go build -o bin/benchmark cmd/benchmark/main.go
+
+# 运行直接检测测试（默认100个请求，10个并发）
+./bin/benchmark
+
+# 自定义测试参数
+./bin/benchmark -total 1000 -concurrent 50 -text "测试文本内容"
+
+# 运行队列模式测试
+./bin/benchmark -queue -total 1000
+
+# 使用自定义配置文件
+./bin/benchmark -config custom-config.yaml
+```
+
+### 性能指标说明
+
+- **QPS (Queries Per Second)**: 每秒处理的请求数
+- **平均延迟**: 所有请求的平均响应时间
+- **P50/P95/P99 延迟**: 50%/95%/99% 的请求响应时间
+- **成功率**: 请求成功的百分比
+- **总耗时**: 所有请求完成的总时间
 
 ## 🤝 贡献
 
@@ -206,6 +321,7 @@ go build -o bin/server cmd/server/main.go
 - [Gin](https://gin-gonic.com/) - HTTP Web 框架
 - [GORM](https://gorm.io/) - ORM 库
 - [pgvector](https://github.com/pgvector/pgvector) - PostgreSQL 向量相似度搜索
+- [Redis](https://redis.io/) - 内存数据库和缓存
 - [Ollama](https://ollama.com/) - 本地 LLM 服务
 - [Viper](https://github.com/spf13/viper) - 配置管理
 

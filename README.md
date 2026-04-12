@@ -39,6 +39,30 @@ A multi-tenant sensitive word filtering and text moderation SaaS platform built 
 - Prompt composition and context management
 - Risk assessment and suggestion generation
 - Support for both local (Ollama) and cloud LLM providers
+- **Auto-learning**: Automatically add detected sensitive words to the database when LLM identifies them
+
+### ⚡ Performance Optimization
+
+#### Redis Cache Layer
+- Detection result caching (TTL: 1 hour)
+- Reduce computational overhead for duplicate text
+- Support tenant-level cache isolation
+
+#### Async Detection Queue
+- Message queue based on Redis List
+- Peak shaving and valley filling for high concurrency scenarios
+- Blocking dequeue (BRPop) to avoid empty polling
+- Task result caching (TTL: 24 hours)
+
+#### Concurrency Optimization
+- Concurrent execution of Layer1 and Layer2
+- Use goroutine and sync.WaitGroup for concurrency control
+- Improve overall detection throughput
+
+#### Performance Testing Tool
+- Support concurrent request testing
+- Support queue mode testing
+- Output key performance metrics (QPS, average latency, P99 latency, etc.)
 
 ### 📝 Sensitive Word Management
 - CRUD operations for sensitive words
@@ -65,6 +89,7 @@ A multi-tenant sensitive word filtering and text moderation SaaS platform built 
 - **Web Framework**: Gin
 - **ORM**: GORM
 - **Database**: PostgreSQL + pgvector
+- **Cache**: Redis
 - **Configuration**: Viper
 - **Authentication**: JWT
 - **LLM Support**: Ollama, Online (OpenAI-compatible APIs)
@@ -73,8 +98,10 @@ A multi-tenant sensitive word filtering and text moderation SaaS platform built 
 
 ```
 ├── cmd/
-│   └── server/              # main.go entry point
+│   ├── server/              # main.go entry point
+│   └── benchmark/           # Performance testing tool
 ├── internal/
+│   ├── cache/               # Redis cache client
 │   ├── config/              # Viper configuration definitions
 │   ├── middleware/          # Gin middleware (JWT auth, rate limiting)
 │   ├── models/              # GORM data models (entities)
@@ -86,30 +113,121 @@ A multi-tenant sensitive word filtering and text moderation SaaS platform built 
 │       ├── layer2_semantic/ # Layer 2: Semantic retrieval
 │       ├── layer3_reason/   # Layer 3: LLM reasoning
 │       ├── orchestrator/     # Orchestrator layer
+│       ├── queue/           # Async detection queue
 │       ├── detection_history/# Detection history service
 │       └── api_key/         # API key management
 ├── pkg/
-│   ├── ecode/               # Unified business error codes
-│   └── logger/              # Logging wrapper
+│   ├── benchmark/           # Performance testing tool
+│   └── ecode/               # Unified business error codes
 ├── docs/
 │   ├── LAYERED_ARCHITECTURE.md  # Three-layer architecture documentation
 │   └── API_DOCUMENTATION.md       # API documentation
 ├── migrations/                 # Database migration files
 ├── config.yaml                # Configuration file
+├── docker-compose.yml         # Docker orchestration configuration
 ├── go.mod
 └── README.md
 ```
 
 ## 🚀 Quick Start
 
-### 1. Prerequisites
+### Option 1: Docker Deployment (Recommended)
+
+#### 1. Start All Services
+
+```bash
+# Start PostgreSQL, Redis, Ollama services
+docker-compose up -d
+
+# Check service status
+docker-compose ps
+```
+
+#### 2. Install Ollama Models
+
+```bash
+# Enter Ollama container
+docker exec -it jetwash-ollama bash
+
+# Install reasoning model
+ollama pull qwen2.5:0.5b
+
+# Install embedding model
+ollama pull nomic-embed-text:v1.5
+
+# Exit container
+exit
+```
+
+#### 3. Configure Application
+
+Edit `config.yaml` file:
+
+```yaml
+server:
+  port: 13142
+  mode: debug
+  read_timeout: 300
+  write_timeout: 300
+
+database:
+  host: localhost
+  port: 15432
+  user: postgres
+  password: jetwash-postgres
+  dbname: jetwash
+  sslmode: disable
+  max_open_conns: 100
+  max_idle_conns: 10
+
+redis:
+  addr: "localhost:16379"
+  password: "jetwash-redis"
+  db: 0
+
+llm:
+  ollama:
+    host: "http://localhost"
+    port: 11434
+    embedding_model: "nomic-embed-text:v1.5"
+    reasoning_model: "qwen2.5:0.5b"
+  online:
+    api_key: "your-api-key"
+    model: "glm-4.7"
+    base_url: "https://open.bigmodel.cn/api/paas/v4"
+    embedding_model: "embedding-3"
+  provider: "ollama"  # online, ollama
+
+jwt:
+  secret: "jetwash-jwt-secret"
+  expire_hour: 24
+```
+
+#### 4. Run Application
+
+```bash
+# Download dependencies
+go mod tidy
+
+# Run service
+go run cmd/server/main.go
+
+# Or build and run
+go build -o bin/jetwash cmd/server/main.go
+./bin/jetwash
+```
+
+### Option 2: Manual Deployment
+
+#### 1. Prerequisites
 
 Ensure you have installed:
 
 - Go 1.25+
 - PostgreSQL 14+ (with pgvector extension)
+- Redis 7+
 
-### 2. Install pgvector Extension
+#### 2. Install pgvector Extension
 
 ```sql
 -- Connect to PostgreSQL
@@ -125,46 +243,18 @@ CREATE DATABASE jetwash;
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-### 3. Configure Database
+#### 3. Configure Redis
 
-Edit `config.yaml` file:
-
-```yaml
-server:
-  port: 13142
-  mode: debug  # debug, release
-  read_timeout: 300
-  write_timeout: 300
-
-database:
-  host: localhost
-  port: 15432
-  user: postgres
-  password: 123456
-  dbname: jetwash
-  sslmode: disable
-  max_open_conns: 100
-  max_idle_conns: 10
-
-llm:
-  ollama:
-    host: "http://localhost"
-    port: 11434
-    embedding_model: "nomic-embed-text:v1.5"
-    reasoning_model: "qwen2.5:0.5b"
-  online:
-    api_key: "your-api-key"
-    model: "glm-4.7"
-    base_url: "https://open.bigmodel.cn/api/paas/v4"
-    embedding_model: "embedding-3"
-  provider: "online"  # online, ollama
-
-jwt:
-  secret: "jetwash-jwt-secret"
-  expire_hour: 24
+```bash
+# Start Redis (with password)
+redis-server --requirepass your-redis-password
 ```
 
-### 4. Run Service
+#### 4. Configure Application
+
+Edit `config.yaml` file, configure database and Redis connection information.
+
+#### 5. Run Service
 
 ```bash
 # Download dependencies
@@ -172,16 +262,41 @@ go mod tidy
 
 # Run service
 go run cmd/server/main.go
-
-# Or build and run
-go build -o bin/server cmd/server/main.go
-./bin/server
 ```
 
 ## 📚 Documentation
 
 - [Three-Layer Architecture Documentation](./docs/LAYERED_ARCHITECTURE.md)
 - [API Documentation](./docs/API_DOCUMENTATION.md)
+
+## 🧪 Performance Testing
+
+### Run Performance Tests
+
+```bash
+# Build performance testing tool
+go build -o bin/benchmark cmd/benchmark/main.go
+
+# Run direct detection test (default 100 requests, 10 concurrent)
+./bin/benchmark
+
+# Custom test parameters
+./bin/benchmark -total 1000 -concurrent 50 -text "test text content"
+
+# Run queue mode test
+./bin/benchmark -queue -total 1000
+
+# Use custom config file
+./bin/benchmark -config custom-config.yaml
+```
+
+### Performance Metrics
+
+- **QPS (Queries Per Second)**: Number of requests processed per second
+- **Average Latency**: Average response time for all requests
+- **P50/P95/P99 Latency**: Response time for 50%/95%/99% of requests
+- **Success Rate**: Percentage of successful requests
+- **Total Duration**: Total time to complete all requests
 
 ## 🤝 Contributing
 
@@ -202,6 +317,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [Gin](https://gin-gonic.com/) - HTTP web framework
 - [GORM](https://gorm.io/) - ORM library
 - [pgvector](https://github.com/pgvector/pgvector) - Vector similarity search for PostgreSQL
+- [Redis](https://redis.io/) - In-memory data store and cache
 - [Ollama](https://ollama.com/) - Local LLM service
 - [Viper](https://github.com/spf13/viper) - Configuration management
 

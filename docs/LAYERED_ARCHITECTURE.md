@@ -8,7 +8,7 @@ Jetwash 平台采用三层漏斗式架构进行文本审查，每一层都有不
 
 1. **Layer 1: Speed (快速匹配层)** - 基于 AC 自动机的精确匹配
 2. **Layer 2: Semantic (语义检索层)** - 基于 pgvector 的向量检索
-3. **Layer 3: Reason (推理层)** - 基于 LLM 的智能推理
+3. **Layer 3: Reason (推理层)** - 基于 LLM 的智能推理（支持自动学习）
 
 ## 目录结构
 
@@ -25,10 +25,19 @@ internal/service/
 ├── layer2_semantic/        # 第二层：语义检索层
 │   ├── service.go         # 第二层服务接口
 │   └── repository.go      # pgvector 仓库实现
-├── layer3_reason/         # 第三层：推理层
-│   └── service.go         # 第三层服务接口（LLM Prompt 组合）
-└── orchestrator/           # 编排层
-    └── orchestrator.go    # 三层漏斗编排
+├── layer3_reason/         # 第三层：推理层（支持自动学习）
+│   └── service.go         # 第三层服务接口（LLM Prompt 组合 + 自动学习）
+├── orchestrator/           # 编排层
+│   └── orchestrator.go    # 三层漏斗编排 + 自动学习集成
+├── queue/                  # 异步队列服务
+│   └── queue_service.go   # Redis 队列实现
+└── detection_history/      # 检测历史服务
+    └── service.go         # 检测历史管理
+```
+
+```
+internal/cache/
+└── redis.go               # Redis 缓存客户端（缓存 + 队列）
 ```
 
 ## Layer 1: Speed (快速匹配层)
@@ -288,6 +297,7 @@ result, err := layer2Service.SemanticSearch(
 - 基于 LLM 的智能推理
 - Prompt 组合和上下文管理
 - 风险评估和建议生成
+- **自动学习**：当 LLM 检测到新的违禁词时，自动添加到敏感词库和 Redis 缓存
 
 ### 核心组件
 
@@ -301,6 +311,21 @@ type Layer3Service interface {
 }
 ```
 
+#### 推理结果（支持自动学习）
+
+```go
+type Layer3Result struct {
+    HasRisk       bool     `json:"has_risk"`
+    RiskLevel     int      `json:"risk_level"`
+    RiskReason    string   `json:"risk_reason"`
+    Suggestions   []string `json:"suggestions"`
+    IsApproved    bool     `json:"is_approved"`
+    Confidence    float64  `json:"confidence"`
+    Reasoning     string   `json:"reasoning"`
+    DetectedWords []string `json:"detected_words"` // LLM 识别出的违禁词（用于自动学习）
+}
+```
+
 #### 推理上下文
 
 ```go
@@ -311,6 +336,20 @@ context := layer3_reason.NewReasonContext().
     WithTemperature(0.7)
 ```
 
+### 自动学习机制
+
+当 Layer 3 检测到新的违禁词且判断文本有风险时，系统会自动执行以下操作：
+
+1. **检测条件**：
+   - Layer 3 LLM 检测到风险（`HasRisk = true`）
+   - LLM 识别出具体的违禁词（`DetectedWords` 不为空）
+   - LLM 不批准该文本（`IsApproved = false`）
+
+2. **自动学习流程**：
+   - 将检测到的违禁词添加到数据库（category = "llm_detected", risk_level = 3）
+   - 将检测到的违禁词添加到 Redis 缓存（Set 结构，TTL = 7 天）
+   - 自动更新 AC 自动机以包含新词
+
 ### 使用示例
 
 ```go
@@ -318,8 +357,13 @@ context := layer3_reason.NewReasonContext().
 mockLLMProvider := layer3_reason.NewMockLLMProvider("LLM 响应")
 layer3Service := layer3_reason.NewLayer3Service(mockLLMProvider)
 
-// 推理分析
+// 推理分析（返回包含 DetectedWords 的结果）
 result, err := layer3Service.ReasonText(tenantID, "这是一段文本", context)
+
+// 检查是否检测到新的违禁词（用于自动学习）
+if len(result.DetectedWords) > 0 && !result.IsApproved {
+    // 自动添加到数据库和 Redis
+}
 ```
 
 ## Orchestrator (编排层)
@@ -329,6 +373,7 @@ result, err := layer3Service.ReasonText(tenantID, "这是一段文本", context)
 - 三层漏斗式编排
 - 灵活的配置选项
 - 结果聚合和总结
+- **自动学习集成**：自动将 LLM 检测到的违禁词添加到敏感词库
 
 ### 核心组件
 
@@ -354,6 +399,24 @@ config := &orchestrator.OrchestratorConfig{
     Layer2Threshold:    0.3,
     Layer2Limit:        10,
     Layer3EnableReason: true,
+    EnableAutoLearning: true, // 是否启用自动学习
+}
+```
+
+### 自动学习集成
+
+编排器在处理检测结果时，会自动检查 Layer 3 是否检测到新的违禁词：
+
+```go
+// 如果 LLM 检测到新的违禁词且判断文本有风险，记录这些违禁词
+if len(layer3Result.DetectedWords) > 0 && !layer3Result.IsApproved {
+    newlyDetectedWords = layer3Result.DetectedWords
+}
+
+// 自动将检测到的违禁词添加到数据库和 Redis
+if len(newlyDetectedWords) > 0 {
+    o.addDetectedWordsToDatabase(tenantID, newlyDetectedWords)
+    o.addDetectedWordsToRedis(tenantID, newlyDetectedWords)
 }
 ```
 
@@ -361,11 +424,51 @@ config := &orchestrator.OrchestratorConfig{
 
 ```go
 // 创建编排器
-orchestrator := orchestrator.NewOrchestrator(layer1Service, layer2Service, layer3Service)
+orchestrator := orchestrator.NewOrchestrator(layer1Service, layer2Service, layer3Service, redisClient)
 
-// 检查文本
+// 检查文本（自动学习已集成）
 result, err := orchestrator.CheckText(tenantID, "这是一段文本")
 ```
+
+## Redis 缓存与队列
+
+### 功能
+
+- **检测结果缓存**：缓存检测结果，TTL = 1 小时
+- **敏感词缓存**：缓存敏感词集合，TTL = 7 天
+- **异步队列**：基于 Redis List 的消息队列，用于高并发场景
+
+### 核心组件
+
+#### Redis 客户端
+
+```go
+type RedisClient struct {
+    client *redis.Client
+}
+
+// 缓存操作
+func (r *RedisClient) Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error
+func (r *RedisClient) Get(ctx context.Context, key string) (string, error)
+
+// 集合操作（用于敏感词）
+func (r *RedisClient) SAdd(ctx context.Context, key string, members ...interface{}) error
+func (r *RedisClient) SMembers(ctx context.Context, key string) ([]string, error)
+func (r *RedisClient) Expire(ctx context.Context, key string, expiration time.Duration) error
+
+// 队列操作
+func (r *RedisClient) LPush(ctx context.Context, key string, values ...interface{}) error
+func (r *RedisClient) BRPop(ctx context.Context, timeout time.Duration, keys ...string) ([]string, error)
+```
+
+### 缓存键设计
+
+| 键类型 | 键格式 | TTL | 说明 |
+|--------|--------|-----|------|
+| 检测结果 | `detection:{tenantID}:{hash}` | 1 小时 | 缓存检测结果 |
+| 敏感词集合 | `sensitive_words:{tenantID}` | 7 天 | 租户敏感词集合 |
+| 队列 | `queue:detection` | - | 异步检测队列 |
+| 队列结果 | `queue:result:{taskID}` | 24 小时 | 队列任务结果 |
 
 ## HTTP 接口
 
@@ -374,9 +477,9 @@ result, err := orchestrator.CheckText(tenantID, "这是一段文本")
 ```bash
 POST /api/v1/orchestrator/check
 Content-Type: application/json
+X-API-Key: your-api-key
 
 {
-  "tenant_id": "uuid",
   "text": "这是一段文本"
 }
 ```
@@ -386,9 +489,9 @@ Content-Type: application/json
 ```bash
 POST /api/v1/orchestrator/check/config
 Content-Type: application/json
+X-API-Key: your-api-key
 
 {
-  "tenant_id": "uuid",
   "text": "这是一段文本",
   "config": {
     "enable_layer1": true,
@@ -405,9 +508,9 @@ Content-Type: application/json
 ```bash
 POST /api/v1/orchestrator/check/context
 Content-Type: application/json
+X-API-Key: your-api-key
 
 {
-  "tenant_id": "uuid",
   "text": "这是一段文本",
   "context": {
     "scenario": "社交媒体评论",
@@ -422,9 +525,9 @@ Content-Type: application/json
 ```bash
 POST /api/v1/orchestrator/check/full
 Content-Type: application/json
+X-API-Key: your-api-key
 
 {
-  "tenant_id": "uuid",
   "text": "这是一段文本",
   "config": {
     "enable_layer1": true,
@@ -436,6 +539,37 @@ Content-Type: application/json
     "temperature": 0.7
   }
 }
+```
+
+### 异步检测接口
+
+```bash
+POST /api/v1/orchestrator/check/async
+Content-Type: application/json
+X-API-Key: your-api-key
+
+{
+  "text": "这是一段文本"
+}
+```
+
+**响应示例：**
+```json
+{
+  "code": 0,
+  "message": "Success",
+  "data": {
+    "task_id": "uuid-string",
+    "status": "pending"
+  }
+}
+```
+
+### 查询异步任务结果
+
+```bash
+GET /api/v1/orchestrator/check/async/{task_id}
+X-API-Key: your-api-key
 ```
 
 ## 响应格式
@@ -450,6 +584,7 @@ Content-Type: application/json
     "passed": false,
     "risk_level": 3,
     "message": "文本包含敏感内容",
+    "total_matches": 8,
     "layer1_result": {
       "has_match": true,
       "matched_words": [...],
@@ -472,10 +607,11 @@ Content-Type: application/json
       "suggestions": ["修改文本内容"],
       "is_approved": false,
       "confidence": 0.9,
-      "reasoning": "基于敏感词匹配结果分析"
+      "reasoning": "基于敏感词匹配结果分析",
+      "detected_words": ["新检测到的违禁词"] // LLM 识别出的违禁词
     },
-    "total_matches": 8,
-    "execution_time": 150
+    "duration_ms": 150,
+    "learned_words": ["新检测到的违禁词"] // 本次检测自动学习到的词
   }
 }
 ```
@@ -538,6 +674,16 @@ Content-Type: application/json
 
 - `enable_layer3`: 是否启用第三层
 - `layer3_enable_reason`: 是否启用推理
+- `enable_auto_learning`: 是否启用自动学习
+
+### Redis 配置
+
+```yaml
+redis:
+  addr: "localhost:16379"
+  password: "jetwash-redis"
+  db: 0
+```
 
 ## 性能优化建议
 
@@ -556,6 +702,14 @@ Content-Type: application/json
    - 批量处理请求
    - 使用流式响应减少延迟
 
+4. **缓存优化**
+   - 使用 Redis 缓存检测结果，减少重复计算
+   - 设置合理的 TTL，平衡缓存命中率和数据新鲜度
+
+5. **异步处理**
+   - 高并发场景使用异步队列
+   - 后台消费队列任务，异步返回结果
+
 ## 扩展建议
 
 1. **Layer1 扩展** ✅ 已实现
@@ -568,28 +722,43 @@ Content-Type: application/json
    - 支持自定义相似度算法
    - 支持实时更新向量索引
 
-3. **Layer3 扩展**
+3. **Layer3 扩展** ✅ 部分实现
+   - ✅ 支持自动学习
    - 支持更多 LLM 提供者
    - 支持自定义 Prompt 模板
    - 支持多轮对话
+
+4. **缓存扩展**
+   - 支持多级缓存策略
+   - 支持缓存预热
+   - 支持缓存失效策略
 
 ## 注意事项
 
 1. **数据隔离**
    - 所有层都支持 tenant_id 隔离
    - 确保敏感词和向量数据按租户隔离
+   - Redis 缓存也按租户隔离
 
 2. **性能考虑**
    - Layer1 最快，Layer2 次之，Layer3 最慢
    - 根据业务需求选择合适的层组合
    - 可以配置在某一层停止以提高性能
+   - 高并发场景建议使用异步队列
 
 3. **准确性考虑**
    - Layer1 精确匹配，准确性最高
    - Layer2 语义匹配，可能存在误判
    - Layer3 智能推理，准确性取决于 LLM 能力
+   - 自动学习功能需要人工审核确认
 
 4. **成本考虑**
    - Layer1 和 Layer2 成本较低
    - Layer3 需要调用 LLM API，成本较高
    - 建议根据业务需求合理配置
+   - 使用缓存减少 LLM 调用次数
+
+5. **Redis 配置**
+   - 生产环境建议配置 Redis 密码
+   - 配置合适的内存策略
+   - 考虑使用 Redis Cluster 保证高可用

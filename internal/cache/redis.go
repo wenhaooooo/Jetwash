@@ -62,3 +62,16 @@ func (r *RedisClient) Dequeue(ctx context.Context, queueName string) (string, er
 	}
 	return result[1], nil
 }
+
+// 用于敏感词集合的方法
+func (r *RedisClient) SAdd(ctx context.Context, key string, members ...interface{}) error {
+	return r.client.SAdd(ctx, key, members...).Err()
+}
+
+func (r *RedisClient) SMembers(ctx context.Context, key string) ([]string, error) {
+	return r.client.SMembers(ctx, key).Result()
+}
+
+func (r *RedisClient) Expire(ctx context.Context, key string, expiration time.Duration) error {
+	return r.client.Expire(ctx, key, expiration).Err()
+}

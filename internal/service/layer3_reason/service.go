@@ -30,13 +30,14 @@ type Message struct {
 
 // Layer3Result 第三层结果
 type Layer3Result struct {
-	HasRisk     bool     `json:"has_risk"`
-	RiskLevel   int      `json:"risk_level"`
-	RiskReason  string   `json:"risk_reason"`
-	Suggestions []string `json:"suggestions"`
-	IsApproved  bool     `json:"is_approved"`
-	Confidence  float64  `json:"confidence"`
-	Reasoning   string   `json:"reasoning"`
+	HasRisk       bool     `json:"has_risk"`
+	RiskLevel     int      `json:"risk_level"`
+	RiskReason    string   `json:"risk_reason"`
+	Suggestions   []string `json:"suggestions"`
+	IsApproved    bool     `json:"is_approved"`
+	Confidence    float64  `json:"confidence"`
+	Reasoning     string   `json:"reasoning"`
+	DetectedWords []string `json:"detected_words"` // LLM识别出的违禁词
 }
 
 // Layer3Service 第三层服务接口 - 推理层
@@ -174,6 +175,7 @@ func (s *layer3Service) GeneratePrompt(tenantID uuid.UUID, text string, matches 
 	builder.WriteString("风险等级: 0-5\n")
 	builder.WriteString("是否有风险: 是/否\n")
 	builder.WriteString("风险理由: [详细说明]\n")
+	builder.WriteString("检测到的违禁词: [违禁词1, 违禁词2, ...]\n")
 	builder.WriteString("建议: [建议1, 建议2, ...]\n")
 	builder.WriteString("是否批准: 是/否\n")
 	builder.WriteString("置信度: 0.0-1.0\n")
@@ -224,13 +226,14 @@ func (s *layer3Service) GenerateSystemPrompt(tenantID uuid.UUID) string {
 // parseLLMResponse 解析 LLM 响应
 func (s *layer3Service) parseLLMResponse(response string) *Layer3Result {
 	result := &Layer3Result{
-		HasRisk:     false,
-		RiskLevel:   0,
-		RiskReason:  "",
-		Suggestions: make([]string, 0),
-		IsApproved:  true,
-		Confidence:  0.0,
-		Reasoning:   "",
+		HasRisk:       false,
+		RiskLevel:     0,
+		RiskReason:    "",
+		Suggestions:   make([]string, 0),
+		IsApproved:    true,
+		Confidence:    0.0,
+		Reasoning:     "",
+		DetectedWords: make([]string, 0),
 	}
 
 	// 简单解析响应（实际应用中应该使用更复杂的解析逻辑）
@@ -247,6 +250,18 @@ func (s *layer3Service) parseLLMResponse(response string) *Layer3Result {
 		} else if strings.HasPrefix(line, "风险理由:") {
 			result.RiskReason = strings.TrimPrefix(line, "风险理由:")
 			result.RiskReason = strings.TrimSpace(result.RiskReason)
+		} else if strings.HasPrefix(line, "检测到的违禁词:") {
+			detectedWordsStr := strings.TrimPrefix(line, "检测到的违禁词:")
+			detectedWordsStr = strings.TrimSpace(detectedWordsStr)
+			if detectedWordsStr != "" && detectedWordsStr != "[]" {
+				// 移除方括号并分割违禁词
+				detectedWordsStr = strings.TrimPrefix(detectedWordsStr, "[")
+				detectedWordsStr = strings.TrimSuffix(detectedWordsStr, "]")
+				result.DetectedWords = strings.Split(detectedWordsStr, ",")
+				for i := range result.DetectedWords {
+					result.DetectedWords[i] = strings.TrimSpace(result.DetectedWords[i])
+				}
+			}
 		} else if strings.HasPrefix(line, "建议:") {
 			suggestionsStr := strings.TrimPrefix(line, "建议:")
 			suggestionsStr = strings.TrimSpace(suggestionsStr)
