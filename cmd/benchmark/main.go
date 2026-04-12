@@ -51,7 +51,10 @@ func main() {
 	defer repository.CloseDB()
 
 	// 初始化Redis
-	redisClient := cache.NewRedisClient(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, logger.GetLogger())
+	redisClient, err := cache.NewRedisClient(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, logger.GetLogger())
+	if err != nil {
+		log.Fatalf("Failed to connect to Redis: %v", err)
+	}
 	defer redisClient.Close()
 
 	// 初始化Repository
@@ -88,6 +91,7 @@ func main() {
 		wordRepo,
 		detectionHistoryService,
 		redisClient,
+		logger.GetLogger(),
 	)
 
 	// 初始化队列服务

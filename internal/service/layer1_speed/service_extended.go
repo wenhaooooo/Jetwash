@@ -52,7 +52,7 @@ type extendedLayer1Service struct {
 // NewExtendedLayer1Service 创建扩展的第一层服务实例
 func NewExtendedLayer1Service() ExtendedLayer1Service {
 	return &extendedLayer1Service{
-		layer1Service:    layer1Service{automaton: NewACAutomaton(), normalizer: NewTextNormalizer()},
+		layer1Service:    layer1Service{automata: make(map[string]*ACAutomaton), normalizer: NewTextNormalizer()},
 		regexMatcher:     NewRegexMatcher(),
 		fuzzyMatcher:     NewFuzzyMatcher(),
 		multilangMatcher: NewMultiLangMatcher(),
@@ -109,8 +109,14 @@ func (s *extendedLayer1Service) MatchAll(text string, tenantID uuid.UUID, fuzzyT
 	// 规范化文本
 	normalized := s.NormalizeText(text)
 
+	// 获取租户的自动机
+	automaton, err := s.getAutomaton(tenantID)
+	if err != nil {
+		automaton = NewACAutomaton()
+	}
+
 	// AC 自动机匹配
-	acMatches := s.automaton.MatchWithTenantID(normalized, tenantID)
+	acMatches := automaton.MatchWithTenantID(normalized, tenantID)
 
 	// 正则表达式匹配
 	regexMatches := s.regexMatcher.MatchWithTenantID(normalized, tenantID)
@@ -269,7 +275,9 @@ func (s *extendedLayer1Service) GetAllCategories(result *Layer1ExtendedResult) [
 
 // ClearAll 清空所有匹配器
 func (s *extendedLayer1Service) ClearAll() {
-	s.automaton.Clear()
+	s.mu.Lock()
+	s.automata = make(map[string]*ACAutomaton)
+	s.mu.Unlock()
 	s.regexMatcher.Clear()
 	s.fuzzyMatcher.Clear()
 	s.multilangMatcher.Clear()

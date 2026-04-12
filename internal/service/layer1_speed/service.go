@@ -2,6 +2,8 @@ package layer1_speed
 
 import (
 	"fmt"
+	"sync"
+
 	"jetwash/internal/models"
 
 	"github.com/google/uuid"
@@ -44,15 +46,16 @@ type Layer1Result struct {
 
 // layer1Service 第一层服务实现
 type layer1Service struct {
-	automaton  *ACAutomaton
+	automata   map[string]*ACAutomaton // key: tenantID string
 	normalizer *TextNormalizer
 	segmenter  *WordSegmenter
+	mu         sync.RWMutex
 }
 
 // NewLayer1Service 创建第一层服务实例
 func NewLayer1Service() Layer1Service {
 	return &layer1Service{
-		automaton:  NewACAutomaton(),
+		automata:   make(map[string]*ACAutomaton),
 		normalizer: NewTextNormalizer(),
 		segmenter:  NewWordSegmenter(),
 	}
@@ -69,11 +72,17 @@ func (s *layer1Service) CheckText(tenantID uuid.UUID, text string) (*Layer1Resul
 		return nil, fmt.Errorf("text cannot be empty")
 	}
 
+	// 获取租户的自动机
+	automaton, err := s.getAutomaton(tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get automaton: %w", err)
+	}
+
 	// 规范化文本
 	normalized := s.NormalizeText(text)
 
 	// 使用 AC 自动机匹配敏感词
-	matchedWords := s.automaton.MatchWithTenantID(normalized, tenantID)
+	matchedWords := automaton.MatchWithTenantID(normalized, tenantID)
 
 	// 构建结果
 	result := s.buildResult(matchedWords, normalized)
@@ -81,24 +90,15 @@ func (s *layer1Service) CheckText(tenantID uuid.UUID, text string) (*Layer1Resul
 	return result, nil
 }
 
-// BuildAutomaton 构建或重建 AC 自动机
+// BuildAutomaton 构建或重建 AC 自动机（兼容旧接口，使用第一个租户的ID）
 func (s *layer1Service) BuildAutomaton(words []string, payloads []*Payload) error {
-	if len(words) != len(payloads) {
-		return fmt.Errorf("words and payloads length mismatch")
+	if len(words) == 0 || len(payloads) == 0 {
+		return fmt.Errorf("words and payloads cannot be empty")
 	}
 
-	// 清空现有自动机
-	s.automaton.Clear()
-
-	// 批量插入敏感词
-	if err := s.automaton.BatchInsert(words, payloads); err != nil {
-		return fmt.Errorf("failed to batch insert words: %w", err)
-	}
-
-	// 构建失败指针
-	s.automaton.BuildFail()
-
-	return nil
+	// 使用第一个 payload 的租户ID
+	tenantID := payloads[0].TenantID
+	return s.BuildAutomatonForTenant(tenantID, words, payloads)
 }
 
 // AddWord 添加敏感词到 AC 自动机
@@ -111,25 +111,35 @@ func (s *layer1Service) AddWord(word string, payload *Payload) error {
 		return fmt.Errorf("payload cannot be nil")
 	}
 
+	// 获取租户的自动机
+	automaton, err := s.getAutomaton(payload.TenantID)
+	if err != nil {
+		return fmt.Errorf("failed to get automaton: %w", err)
+	}
+
 	// 规范化敏感词
 	normalizedWord := s.NormalizeText(word)
 	payload.WordText = normalizedWord
 
 	// 插入敏感词
-	if err := s.automaton.Insert(normalizedWord, payload); err != nil {
+	if err := automaton.Insert(normalizedWord, payload); err != nil {
 		return fmt.Errorf("failed to insert word: %w", err)
 	}
 
 	// 重新构建失败指针
-	s.automaton.BuildFail()
+	automaton.BuildFail()
 
 	return nil
 }
 
 // GetMatchedWords 获取匹配到的敏感词
 func (s *layer1Service) GetMatchedWords(tenantID uuid.UUID, text string) []*MatchResult {
+	automaton, err := s.getAutomaton(tenantID)
+	if err != nil {
+		return nil
+	}
 	normalized := s.NormalizeText(text)
-	return s.automaton.MatchWithTenantID(normalized, tenantID)
+	return automaton.MatchWithTenantID(normalized, tenantID)
 }
 
 // NormalizeText 规范化文本
@@ -198,5 +208,59 @@ func (s *layer1Service) Initialize(tenantID uuid.UUID, words []models.SensitiveW
 	}
 
 	// 构建AC自动机
-	return s.BuildAutomaton(wordsList, payloads)
+	return s.BuildAutomatonForTenant(tenantID, wordsList, payloads)
+}
+
+// getAutomaton 获取租户的自动机
+func (s *layer1Service) getAutomaton(tenantID uuid.UUID) (*ACAutomaton, error) {
+	tenantIDStr := tenantID.String()
+
+	s.mu.RLock()
+	automaton, exists := s.automata[tenantIDStr]
+	s.mu.RUnlock()
+
+	if exists {
+		return automaton, nil
+	}
+
+	// 如果自动机不存在，创建一个空的自动机
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 双重检查
+	if automaton, exists = s.automata[tenantIDStr]; exists {
+		return automaton, nil
+	}
+
+	automaton = NewACAutomaton()
+	s.automata[tenantIDStr] = automaton
+
+	return automaton, nil
+}
+
+// BuildAutomatonForTenant 为特定租户构建 AC 自动机
+func (s *layer1Service) BuildAutomatonForTenant(tenantID uuid.UUID, words []string, payloads []*Payload) error {
+	if len(words) != len(payloads) {
+		return fmt.Errorf("words and payloads length mismatch")
+	}
+
+	tenantIDStr := tenantID.String()
+
+	// 创建新的自动机
+	automaton := NewACAutomaton()
+
+	// 批量插入敏感词
+	if err := automaton.BatchInsert(words, payloads); err != nil {
+		return fmt.Errorf("failed to batch insert words: %w", err)
+	}
+
+	// 构建失败指针
+	automaton.BuildFail()
+
+	// 保存到映射
+	s.mu.Lock()
+	s.automata[tenantIDStr] = automaton
+	s.mu.Unlock()
+
+	return nil
 }

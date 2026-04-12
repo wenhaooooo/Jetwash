@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 
 	"jetwash/internal/cache"
 	"jetwash/internal/models"
@@ -19,6 +22,12 @@ import (
 	"jetwash/internal/service/layer3_reason"
 	"jetwash/internal/types"
 )
+
+// generateCacheKey 生成缓存键（使用 SHA256 哈希）
+func generateCacheKey(tenantID uuid.UUID, text string) string {
+	hash := sha256.Sum256([]byte(text))
+	return fmt.Sprintf("detection:%s:%s", tenantID, hex.EncodeToString(hash[:]))
+}
 
 // DefaultOrchestratorConfig 默认编排配置
 func DefaultOrchestratorConfig() *types.OrchestratorConfig {
@@ -58,6 +67,13 @@ type orchestrator struct {
 	wordRepo                repository.WordRepository
 	detectionHistoryService detection_history.DetectionHistoryService
 	redisClient             *cache.RedisClient
+	logger                  *zap.Logger
+	layer1Cache             sync.Map // key: tenantID string, value: layer1_cache_entry
+}
+
+// layer1_cache_entry Layer1 缓存条目
+type layer1_cache_entry struct {
+	lastUpdated time.Time
 }
 
 // NewOrchestrator 创建编排器实例
@@ -68,6 +84,7 @@ func NewOrchestrator(
 	wordRepo repository.WordRepository,
 	detectionHistoryService detection_history.DetectionHistoryService,
 	redisClient *cache.RedisClient,
+	logger *zap.Logger,
 ) Orchestrator {
 	return &orchestrator{
 		layer1Service:           layer1Service,
@@ -76,6 +93,7 @@ func NewOrchestrator(
 		wordRepo:                wordRepo,
 		detectionHistoryService: detectionHistoryService,
 		redisClient:             redisClient,
+		logger:                  logger,
 	}
 }
 
@@ -104,12 +122,23 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 
 	// 尝试从缓存获取结果
 	if o.redisClient != nil {
-		cacheKey := fmt.Sprintf("detection:%s:%s", tenantID, text)
+		cacheKey := generateCacheKey(tenantID, text)
 		cachedResult, err := o.redisClient.GetWithRefresh(context.Background(), cacheKey, 1*time.Hour)
 		if err == nil {
+			if o.logger != nil {
+				o.logger.Debug("Cache hit for text detection",
+					zap.String("tenantID", tenantID.String()),
+					zap.Int("textLength", len(text)))
+			}
 			var result types.OrchestratorResult
 			if err := json.Unmarshal([]byte(cachedResult), &result); err == nil {
 				return &result, nil
+			}
+		} else {
+			if o.logger != nil {
+				o.logger.Debug("Cache miss for text detection",
+					zap.String("tenantID", tenantID.String()),
+					zap.Int("textLength", len(text)))
 			}
 		}
 	}
@@ -138,8 +167,17 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 
 	defer func() {
 		duration := time.Since(startTime).Milliseconds()
+
+		// 记录检测历史
 		if o.detectionHistoryService != nil {
-			_ = o.detectionHistoryService.SaveDetectionHistory(tenantID, text, mode, result, duration)
+			if err := o.detectionHistoryService.SaveDetectionHistory(tenantID, text, mode, result, duration); err != nil {
+				if o.logger != nil {
+					o.logger.Warn("Failed to save detection history",
+						zap.String("tenantID", tenantID.String()),
+						zap.Int("textLength", len(text)),
+						zap.Error(err))
+				}
+			}
 		}
 
 		// 如果有新检测到的违禁词，添加到数据库和Redis
@@ -150,11 +188,18 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 
 		// 缓存结果
 		if o.redisClient != nil {
-			cacheKey := fmt.Sprintf("detection:%s:%s", tenantID, text)
+			cacheKey := generateCacheKey(tenantID, text)
 			if cachedResult, err := json.Marshal(result); err == nil {
 				// 分层缓存策略：根据检测结果风险等级设置不同的过期时间
 				ttl := o.getCacheTTL(result)
-				o.redisClient.Set(context.Background(), cacheKey, cachedResult, ttl)
+				if err := o.redisClient.Set(context.Background(), cacheKey, cachedResult, ttl); err != nil {
+					if o.logger != nil {
+						o.logger.Warn("Failed to cache detection result",
+							zap.String("tenantID", tenantID.String()),
+							zap.String("cacheKey", cacheKey),
+							zap.Error(err))
+					}
+				}
 			}
 		}
 	}()
@@ -187,21 +232,11 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 		reasonContext = layer3_reason.NewReasonContext()
 	}
 
-	// 初始化Layer1 AC自动机，加载租户的敏感词
+	// 初始化Layer1 AC自动机，加载租户的敏感词（使用缓存）
 	if config.EnableLayer1 {
-		words, err := o.wordRepo.GetAllSensitiveWordsByTenant(tenantID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load sensitive words for layer1: %w", err)
+		if err := o.ensureLayer1Initialized(tenantID); err != nil {
+			return nil, fmt.Errorf("failed to ensure layer1 initialized: %w", err)
 		}
-		if err := o.layer1Service.Initialize(tenantID, words); err != nil {
-			return nil, fmt.Errorf("failed to initialize layer1 automaton: %w", err)
-		}
-
-		wordTexts := make([]string, len(words))
-		for i, w := range words {
-			wordTexts[i] = w.WordText
-		}
-		o.layer1Service.RegisterSegmenterWords(wordTexts)
 	}
 
 	// 并发执行Layer1和Layer2
@@ -215,7 +250,13 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			layer1Start := time.Now()
 			result, err := o.layer1Service.CheckText(tenantID, text)
+			if o.logger != nil {
+				o.logger.Debug("Layer1 execution completed",
+					zap.String("tenantID", tenantID.String()),
+					zap.Duration("duration", time.Since(layer1Start)))
+			}
 			if err != nil {
 				layer1Err = fmt.Errorf("layer1 check failed: %w", err)
 				return
@@ -229,6 +270,7 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			layer2Start := time.Now()
 			result, err := o.layer2Service.SemanticSearch(
 				tenantID,
 				text,
@@ -236,6 +278,11 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 				config.Layer2Limit,
 				nil, // filters
 			)
+			if o.logger != nil {
+				o.logger.Debug("Layer2 execution completed",
+					zap.String("tenantID", tenantID.String()),
+					zap.Duration("duration", time.Since(layer2Start)))
+			}
 			if err != nil {
 				layer2Err = fmt.Errorf("layer2 check failed: %w", err)
 				return
@@ -314,7 +361,13 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 		}
 
 		// 调用推理层
+		layer3Start := time.Now()
 		layer3Result, err := o.layer3Service.ReasonWithMatches(tenantID, text, matches, reasonContext)
+		if o.logger != nil {
+			o.logger.Debug("Layer3 execution completed",
+				zap.String("tenantID", tenantID.String()),
+				zap.Duration("duration", time.Since(layer3Start)))
+		}
 		if err != nil {
 			return nil, fmt.Errorf("layer3 check failed: %w", err)
 		}
@@ -525,4 +578,59 @@ func (o *orchestrator) getCacheTTL(result *types.OrchestratorResult) time.Durati
 		// 通过结果，保留1小时
 		return 1 * time.Hour
 	}
+}
+
+// ensureLayer1Initialized 确保 Layer1 自动机已初始化（使用缓存机制）
+// 缓存有效期为10分钟，过期后自动重新加载
+func (o *orchestrator) ensureLayer1Initialized(tenantID uuid.UUID) error {
+	tenantIDStr := tenantID.String()
+	cacheExpiry := 10 * time.Minute
+
+	// 检查缓存
+	if cachedEntry, ok := o.layer1Cache.Load(tenantIDStr); ok {
+		entry := cachedEntry.(layer1_cache_entry)
+		// 如果缓存未过期，直接返回
+		if time.Since(entry.lastUpdated) < cacheExpiry {
+			if o.logger != nil {
+				o.logger.Debug("Using cached Layer1 automaton",
+					zap.String("tenantID", tenantIDStr))
+			}
+			return nil
+		}
+		// 缓存过期，记录日志
+		if o.logger != nil {
+			o.logger.Debug("Layer1 automaton cache expired, reloading",
+				zap.String("tenantID", tenantIDStr))
+		}
+	} else {
+		// 缓存未命中，记录日志
+		if o.logger != nil {
+			o.logger.Debug("Layer1 automaton cache miss, loading",
+				zap.String("tenantID", tenantIDStr))
+		}
+	}
+
+	// 需要重新加载敏感词并初始化
+	words, err := o.wordRepo.GetAllSensitiveWordsByTenant(tenantID)
+	if err != nil {
+		return fmt.Errorf("failed to load sensitive words for layer1: %w", err)
+	}
+
+	if err := o.layer1Service.Initialize(tenantID, words); err != nil {
+		return fmt.Errorf("failed to initialize layer1 automaton: %w", err)
+	}
+
+	// 注册分词词典
+	wordTexts := make([]string, len(words))
+	for i, w := range words {
+		wordTexts[i] = w.WordText
+	}
+	o.layer1Service.RegisterSegmenterWords(wordTexts)
+
+	// 更新缓存
+	o.layer1Cache.Store(tenantIDStr, layer1_cache_entry{
+		lastUpdated: time.Now(),
+	})
+
+	return nil
 }

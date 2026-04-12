@@ -1,15 +1,17 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"jetwash/internal/config"
 	"jetwash/internal/repository"
 	"jetwash/internal/util"
 	"jetwash/pkg/ecode"
-
-	"github.com/gin-gonic/gin"
 )
 
 const (
@@ -112,4 +114,19 @@ func GetTenantID(c *gin.Context) (string, bool) {
 		return "", false
 	}
 	return tenantID.(string), true
+}
+
+// GetTenantUUID 从 Context 中获取 TenantID 并解析为 UUID
+func GetTenantUUID(c *gin.Context) (uuid.UUID, error) {
+	tenantIDStr, exists := GetTenantID(c)
+	if !exists {
+		return uuid.Nil, fmt.Errorf("tenant_id not found in context")
+	}
+
+	tenantID, err := uuid.Parse(tenantIDStr)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("invalid tenant_id: %w", err)
+	}
+
+	return tenantID, nil
 }

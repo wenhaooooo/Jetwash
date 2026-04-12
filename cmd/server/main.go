@@ -66,7 +66,10 @@ func main() {
 	}
 
 	// 初始化Redis客户端
-	redisClient := cache.NewRedisClient(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, logger.GetLogger())
+	redisClient, err := cache.NewRedisClient(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, logger.GetLogger())
+	if err != nil {
+		log.Fatalf("Failed to connect to Redis: %v", err)
+	}
 	defer redisClient.Close()
 
 	// 初始化 Repository 层
@@ -108,7 +111,7 @@ func main() {
 	}
 
 	// 初始化 Orchestrator: 编排层
-	orchestratorService := orchestrator.NewOrchestrator(layer1Service, layer2Service, layer3Service, wordRepo, detectionHistoryService, redisClient)
+	orchestratorService := orchestrator.NewOrchestrator(layer1Service, layer2Service, layer3Service, wordRepo, detectionHistoryService, redisClient, logger.GetLogger())
 
 	// 初始化队列服务
 	queueService := queue.NewQueueService(redisClient)

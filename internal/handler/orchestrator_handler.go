@@ -16,12 +16,12 @@ import (
 
 // OrchestratorHandler 编排器处理器
 type OrchestratorHandler struct {
-	orchestrator            interface{}
+	orchestrator            orchestrator.Orchestrator
 	detectionHistoryService detection_history.DetectionHistoryService
 }
 
 // NewOrchestratorHandler 创建编排器处理器
-func NewOrchestratorHandler(orchestrator interface{}, detectionHistoryService detection_history.DetectionHistoryService) *OrchestratorHandler {
+func NewOrchestratorHandler(orchestrator orchestrator.Orchestrator, detectionHistoryService detection_history.DetectionHistoryService) *OrchestratorHandler {
 	return &OrchestratorHandler{
 		orchestrator:            orchestrator,
 		detectionHistoryService: detectionHistoryService,
@@ -76,9 +76,7 @@ func (h *OrchestratorHandler) CheckText(c *gin.Context) {
 	// 根据 mode 参数构建检测配置
 	config := h.buildConfigFromMode(req.Mode)
 
-	result, err := h.orchestrator.(interface {
-		CheckTextWithConfig(tenantID uuid.UUID, text string, config *types.OrchestratorConfig) (*types.OrchestratorResult, error)
-	}).CheckTextWithConfig(tenantID, req.Text, config)
+	result, err := h.orchestrator.CheckTextWithConfig(tenantID, req.Text, config)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, OrchestratorCheckTextResponse{
 			Code:    500,
@@ -155,9 +153,7 @@ func (h *OrchestratorHandler) CheckTextWithConfig(c *gin.Context) {
 		return
 	}
 
-	result, err := h.orchestrator.(interface {
-		CheckTextWithConfig(tenantID uuid.UUID, text string, config *types.OrchestratorConfig) (*types.OrchestratorResult, error)
-	}).CheckTextWithConfig(tenantID, req.Text, req.Config)
+	result, err := h.orchestrator.CheckTextWithConfig(tenantID, req.Text, req.Config)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, OrchestratorCheckTextResponse{
 			Code:    500,
@@ -212,9 +208,7 @@ func (h *OrchestratorHandler) CheckTextWithContext(c *gin.Context) {
 		return
 	}
 
-	result, err := h.orchestrator.(interface {
-		CheckTextWithContext(tenantID uuid.UUID, text string, context *layer3_reason.ReasonContext) (*types.OrchestratorResult, error)
-	}).CheckTextWithContext(tenantID, req.Text, req.Context)
+	result, err := h.orchestrator.CheckTextWithContext(tenantID, req.Text, req.Context)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, OrchestratorCheckTextResponse{
 			Code:    500,
@@ -270,9 +264,7 @@ func (h *OrchestratorHandler) CheckTextWithConfigAndContext(c *gin.Context) {
 		return
 	}
 
-	result, err := h.orchestrator.(interface {
-		CheckTextWithConfigAndContext(tenantID uuid.UUID, text string, config *types.OrchestratorConfig, context *layer3_reason.ReasonContext) (*types.OrchestratorResult, error)
-	}).CheckTextWithConfigAndContext(tenantID, req.Text, req.Config, req.Context)
+	result, err := h.orchestrator.CheckTextWithConfigAndContext(tenantID, req.Text, req.Config, req.Context)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, OrchestratorCheckTextResponse{
 			Code:    500,

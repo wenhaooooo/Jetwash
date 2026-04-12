@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -13,7 +14,7 @@ type RedisClient struct {
 	logger *zap.Logger
 }
 
-func NewRedisClient(addr string, password string, db int, logger *zap.Logger) *RedisClient {
+func NewRedisClient(addr string, password string, db int, logger *zap.Logger) (*RedisClient, error) {
 	client := redis.NewClient(&redis.Options{
 		Addr:     addr,
 		Password: password,
@@ -26,12 +27,14 @@ func NewRedisClient(addr string, password string, db int, logger *zap.Logger) *R
 
 	if err := client.Ping(ctx).Err(); err != nil {
 		logger.Error("Failed to connect to Redis", zap.Error(err))
+		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
 	}
 
+	logger.Info("Successfully connected to Redis")
 	return &RedisClient{
 		client: client,
 		logger: logger,
-	}
+	}, nil
 }
 
 func (r *RedisClient) Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
@@ -49,12 +52,17 @@ func (r *RedisClient) GetWithRefresh(ctx context.Context, key string, expiration
 	if err != nil {
 		return "", err
 	}
-	
-	// 异步刷新过期时间（不阻塞主流程）
+
+	// 使用独立的 context，避免父 context 取消影响
 	go func() {
-		r.client.Expire(ctx, key, expiration)
+		refreshCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := r.client.Expire(refreshCtx, key, expiration).Err(); err != nil {
+			r.logger.Warn("Failed to refresh cache expiration", zap.Error(err), zap.String("key", key))
+		}
 	}()
-	
+
 	return result, nil
 }
 
