@@ -49,3 +49,4 @@ migrations/
 
 # docs
 docs/*.csv
+docs/optimization/
