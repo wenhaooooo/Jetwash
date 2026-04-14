@@ -65,6 +65,7 @@ Authorization: Bearer your-jwt-token
 ```
 
 **请求参数说明：**
+
 | 参数名 | 类型 | 必填 | 默认值 | 描述 |
 |-------|------|------|-------|------|
 | text | string | 是 | - | 需要检测的文本内容 |
@@ -142,6 +143,7 @@ Authorization: Bearer your-jwt-token
 ```
 
 **请求参数说明：**
+
 | 参数名 | 类型 | 必填 | 描述 |
 |-------|------|------|------|
 | text | string | 是 | 需要检测的文本内容 |
@@ -156,6 +158,7 @@ Authorization: Bearer your-jwt-token
 #### 2.2.3 获取检测历史列表
 
 **请求参数（Query）：**
+
 | 参数名 | 类型 | 默认值 | 描述 |
 |-------|------|-------|------|
 | page | int | 1 | 页码 |
@@ -238,6 +241,7 @@ Authorization: Bearer your-jwt-token
 | `/api/v1/normal/words/import` | POST | 导入单个敏感词 | 是 |
 
 **获取敏感词列表请求参数（Query）：**
+
 | 参数名 | 类型 | 默认值 | 描述 |
 |-------|------|-------|------|
 | page | int | 1 | 页码 |
