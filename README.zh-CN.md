@@ -378,7 +378,6 @@ go build -o bin/benchmark cmd/benchmark/main.go
 ---
 
 <div align="center">
-  <h3>⭐ Star 趋势</h3>
   <img src="https://api.star-history.com/svg?repos=wenhao/jetwash&type=Date" alt="Star 趋势图表" />
 </div>
 
