@@ -538,6 +538,27 @@ func (o *orchestrator) addDetectedWordsToDatabase(tenantID uuid.UUID, words []st
 		if err := o.wordRepo.CreateSensitiveWord(newWord); err != nil {
 			continue
 		}
+
+		// 增量更新 AC 自动机，使新词立即生效
+		payload := &layer1_speed.Payload{
+			TenantID:  tenantID,
+			WordText:  wordText,
+			Category:  "llm_detected",
+			RiskLevel: 3,
+		}
+
+		if err := o.layer1Service.AddWord(wordText, payload); err != nil {
+			if o.logger != nil {
+				o.logger.Warn("Failed to add word to AC automaton",
+					zap.String("tenantID", tenantID.String()),
+					zap.String("word", wordText),
+					zap.Error(err))
+			}
+		} else if o.logger != nil {
+			o.logger.Debug("Successfully added new word to AC automaton",
+				zap.String("tenantID", tenantID.String()),
+				zap.String("word", wordText))
+		}
 	}
 }
 
