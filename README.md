@@ -374,7 +374,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 <div align="center">
-  <img src="https://api.star-history.com/svg?repos=wenhao/jetwash&type=Date" alt="Star History Chart" />
+  <img src="https://api.star-history.com/svg?repos=wenhaooooo/Jetwash&type=Date" alt="Star History Chart" />
 </div>
 
 <div align="center">
