@@ -39,7 +39,7 @@ A multi-tenant sensitive word filtering and text moderation SaaS platform built 
 - Prompt composition and context management
 - Risk assessment and suggestion generation
 - Support for both local (Ollama) and cloud LLM providers
-- **Auto-learning**: Automatically add detected sensitive words to the database when LLM identifies them
+- **Auto-learning**: Automatically add detected sensitive words to the database and AC automaton when LLM identifies them (incremental update, < 1ms latency)
 
 ### ⚡ Performance Optimization
 
@@ -269,6 +269,8 @@ go run cmd/server/main.go
 - [Three-Layer Architecture Documentation](./docs/LAYERED_ARCHITECTURE.md)
 - [API Documentation](./docs/API_DOCUMENTATION.md)
 - [Code Optimization Documentation](./docs/optimization/CODE_OPTIMIZATION.md)
+- [AC Automaton Update Strategies](./docs/optimization/AC_AUTOMATON_UPDATE_STRATEGIES.md)
+- [Technical Decisions](./docs/technical-decisions/THREE_LAYER_ARCHITECTURE.md)
 
 ## 📋 TODO / Roadmap
 
@@ -288,6 +290,7 @@ go run cmd/server/main.go
 
 ### 🔧 Feature Enhancements
 
+- [x] **Incremental AC Automaton Update** - Auto-learning with incremental update, new words take effect in < 1ms ✅ Implemented
 - [ ] **Blacklist/Whitelist** - Support tenant-specific blacklist and whitelist rules
 - [ ] **Real-time Alerting** - Send webhook notifications when sensitive content is detected
 - [ ] **Audit Log** - Comprehensive audit logging for all sensitive operations

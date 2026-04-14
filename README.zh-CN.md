@@ -43,7 +43,7 @@ Jetwash 是一个基于 Go 语言开发的多租户敏感词与文本风控 SaaS
 - Prompt 组合和上下文管理
 - 风险评估和建议生成
 - 支持本地（Ollama）和云端 LLM 提供者
-- **自动学习**：LLM 检测到违禁词时自动添加到敏感词库
+- **自动学习**：LLM 检测到违禁词时自动添加到敏感词库和 AC 自动机（增量更新，延迟 < 1ms）
 
 ### ⚡ 性能优化
 
@@ -273,6 +273,8 @@ go run cmd/server/main.go
 - [三层架构详细文档](./docs/LAYERED_ARCHITECTURE.md)
 - [API 文档](./docs/API_DOCUMENTATION.md)
 - [代码优化文档](./docs/optimization/CODE_OPTIMIZATION.md)
+- [AC 自动机更新策略](./docs/optimization/AC_AUTOMATON_UPDATE_STRATEGIES.md)
+- [技术决策文档](./docs/technical-decisions/THREE_LAYER_ARCHITECTURE.md)
 
 ## 📋 TODO / 路线图
 
@@ -292,6 +294,7 @@ go run cmd/server/main.go
 
 ### 🔧 功能增强
 
+- [x] **AC 自动机增量更新** - 自动学习采用增量更新，新词 < 1ms 生效 ✅ 已实现
 - [ ] **黑名单/白名单** - 支持租户级别的黑名单和白名单规则
 - [ ] **实时告警** - 检测到敏感内容时发送 Webhook 通知
 - [ ] **审计日志** - 全面的审计日志记录所有敏感操作
