@@ -268,6 +268,53 @@ go run cmd/server/main.go
 
 - [Three-Layer Architecture Documentation](./docs/LAYERED_ARCHITECTURE.md)
 - [API Documentation](./docs/API_DOCUMENTATION.md)
+- [Code Optimization Documentation](./docs/optimization/CODE_OPTIMIZATION.md)
+
+## 📋 TODO / Roadmap
+
+### 🎯 High Priority
+
+- [ ] **Voice Content Moderation** - Add speech-to-text conversion and sensitive content detection for audio files
+- [ ] **Video Content Moderation** - Extract frames and audio from videos, detect sensitive visual content and speech
+- [ ] **Image Content Moderation** - Integrate image recognition to detect sensitive images, logos, and inappropriate content
+- [ ] **Real-time Streaming Moderation** - Support WebSocket-based real-time text/audio streaming detection
+
+### ⚡ Performance Enhancements
+
+- [ ] **Distributed Cache** - Support Redis Cluster for high availability and horizontal scaling
+- [ ] **Load Balancing** - Add support for multiple backend instances with load balancing
+- [ ] **Rate Limiting per Tenant** - Implement tenant-level rate limiting to prevent abuse
+- [ ] **Connection Pool Optimization** - Fine-tune database and Redis connection pool settings
+
+### 🔧 Feature Enhancements
+
+- [ ] **Blacklist/Whitelist** - Support tenant-specific blacklist and whitelist rules
+- [ ] **Real-time Alerting** - Send webhook notifications when sensitive content is detected
+- [ ] **Audit Log** - Comprehensive audit logging for all sensitive operations
+- [ ] **API Analytics** - Dashboard for API usage statistics and detection trends per tenant
+- [ ] **Batch Detection API** - Support batch text detection in a single request
+- [ ] **Language Detection** - Auto-detect text language and apply appropriate rules
+
+### 🔐 Security Improvements
+
+- [ ] **Data Encryption** - Encrypt sensitive data at rest and in transit
+- [ ] **Access Logging** - Detailed logging of API access and operations
+- [ ] **IP Whitelisting** - Allow tenants to restrict API access to specific IP ranges
+- [ ] **API Key Rotation** - Support automatic API key rotation and management
+
+### 🧪 Testing & Quality
+
+- [ ] **Unit Tests** - Comprehensive unit test coverage for all services
+- [ ] **Integration Tests** - End-to-end integration testing
+- [ ] **CI/CD Pipeline** - Automated testing and deployment pipeline
+- [ ] **Performance Benchmark Suite** - Regular performance regression testing
+
+### 📈 Monitoring & Observability
+
+- [ ] **Prometheus Metrics** - Export key metrics for monitoring
+- [ ] **Grafana Dashboard** - Visual dashboard for real-time monitoring
+- [ ] **Distributed Tracing** - Support OpenTelemetry for distributed tracing
+- [ ] **Health Check API** - Add health check endpoints for all services
 
 ## 🧪 Performance Testing
 
