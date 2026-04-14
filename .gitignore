@@ -50,3 +50,4 @@ migrations/
 # docs
 docs/*.csv
 docs/optimization/
+docs/technical-decisions/
