@@ -133,6 +133,12 @@ Jetwash 是一个基于 Go 语言开发的多租户敏感词与文本风控 SaaS
 └── README.md
 ```
 
+## 🏗️ Architecture
+
+<div align="center">
+  <img src="./docs/ARCHITECTURE.png" alt="Jetwash Architecture Diagram" width="800" />
+</div>
+
 ## 🚀 快速开始
 
 ### 方式一：Docker 部署（推荐）

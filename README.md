@@ -129,6 +129,12 @@ A multi-tenant sensitive word filtering and text moderation SaaS platform built 
 └── README.md
 ```
 
+## 🏗️ Architecture
+
+<div align="center">
+  <img src="./docs/ARCHITECTURE.png" alt="Jetwash Architecture Diagram" width="800" />
+</div>
+
 ## 🚀 Quick Start
 
 ### Option 1: Docker Deployment (Recommended)
