@@ -41,6 +41,7 @@ func DefaultOrchestratorConfig() *types.OrchestratorConfig {
 		Layer2Threshold:            0.3,
 		Layer2Limit:                10,
 		Layer3EnableReason:         true,
+		EnableFastPass:             true, // 默认开启非敏感词快速放行
 	}
 }
 
@@ -223,6 +224,7 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 			mergedConfig.Layer2Limit = config.Layer2Limit
 		}
 		mergedConfig.Layer3EnableReason = config.Layer3EnableReason
+		mergedConfig.EnableFastPass = config.EnableFastPass
 		config = &mergedConfig
 	} else {
 		config = defaultConfig
@@ -239,39 +241,51 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 		}
 	}
 
-	// 并发执行Layer1和Layer2
-	var wg sync.WaitGroup
-	var layer1Err, layer2Err error
-	var layer1Result *layer1_speed.Layer1Result
-	var layer2Result *layer2_semantic.Layer2Result
+	// ========== 非敏感词快速放行（Fast Pass） ==========
+	// 当 EnableFastPass 开启时，先单独执行 Layer1：
+	//   - 如果 Layer1 无匹配 → 直接返回通过，跳过 Layer2/3（节省 Embedding API 开销）
+	//   - 如果 Layer1 有匹配 → 继续并发执行 Layer2，进入完整漏斗流程
+	// 设计依据：实际场景中 95%+ 的文本都是非敏感词，Layer1 O(n) 匹配仅需 ~5ms，
+	// 而 Layer2 的 Embedding 调用需要 50~300ms，对非敏感词来说是纯浪费。
+	if config.EnableFastPass && config.EnableLayer1 {
+		layer1Start := time.Now()
+		layer1Result, layer1Err := o.layer1Service.CheckText(tenantID, text)
+		if o.logger != nil {
+			o.logger.Debug("Layer1 fast-pass check completed",
+				zap.String("tenantID", tenantID.String()),
+				zap.Duration("duration", time.Since(layer1Start)))
+		}
+		if layer1Err != nil {
+			return nil, fmt.Errorf("layer1 fast-pass check failed: %w", layer1Err)
+		}
 
-	// Layer 1: 快速匹配层
-	if config.EnableLayer1 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			layer1Start := time.Now()
-			result, err := o.layer1Service.CheckText(tenantID, text)
-			if o.logger != nil {
-				o.logger.Debug("Layer1 execution completed",
-					zap.String("tenantID", tenantID.String()),
-					zap.Duration("duration", time.Since(layer1Start)))
-			}
-			if err != nil {
-				layer1Err = fmt.Errorf("layer1 check failed: %w", err)
-				return
-			}
-			layer1Result = result
-		}()
-	}
+		result.Layer1Result = layer1Result
+		result.TotalMatches += len(layer1Result.MatchedWords)
 
-	// Layer 2: 语义检索层
-	if config.EnableLayer2 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		// Layer1 无匹配 → 非敏感词快速放行
+		if !layer1Result.HasMatch {
+			result.Passed = true
+			result.RiskLevel = 0
+			result.Message = "文本审查通过（快速放行）"
+			return result, nil
+		}
+
+		// Layer1 有匹配 → 检查是否可以直接在 Layer1 停止
+		allAmbiguous := layer1Result.HasAmbiguity &&
+			len(layer1Result.AmbiguousMatches) == len(layer1Result.MatchedWords)
+		if config.StopAtLayer1 && !allAmbiguous {
+			result.Passed = false
+			result.RiskLevel = layer1Result.RiskLevel
+			result.Message = fmt.Sprintf("文本包含敏感内容（Layer1 匹配）: %v", layer1Result.Categories)
+			return result, nil
+		}
+
+		// Layer1 有匹配但需要继续 → 仅启动 Layer2（Layer1 已完成，无需重复执行）
+		if config.EnableLayer2 {
+			var layer2Err error
+			var layer2Result *layer2_semantic.Layer2Result
 			layer2Start := time.Now()
-			result, err := o.layer2Service.SemanticSearch(
+			layer2Result, layer2Err = o.layer2Service.SemanticSearch(
 				tenantID,
 				text,
 				config.Layer2Threshold,
@@ -279,63 +293,123 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 				nil, // filters
 			)
 			if o.logger != nil {
-				o.logger.Debug("Layer2 execution completed",
+				o.logger.Debug("Layer2 execution completed (after fast-pass)",
 					zap.String("tenantID", tenantID.String()),
 					zap.Duration("duration", time.Since(layer2Start)))
 			}
-			if err != nil {
-				layer2Err = fmt.Errorf("layer2 check failed: %w", err)
-				return
-			}
-			layer2Result = result
-		}()
-	}
-
-	// 等待Layer1和Layer2完成
-	wg.Wait()
-
-	// 检查错误
-	if layer1Err != nil {
-		return nil, layer1Err
-	}
-	if layer2Err != nil {
-		return nil, layer2Err
-	}
-
-	// 处理Layer1结果
-	if config.EnableLayer1 && layer1Result != nil {
-		result.Layer1Result = layer1Result
-		result.TotalMatches += len(layer1Result.MatchedWords)
-
-		if layer1Result.HasMatch {
-			allAmbiguous := layer1Result.HasAmbiguity &&
-				len(layer1Result.AmbiguousMatches) == len(layer1Result.MatchedWords)
-
-			shouldStop := config.StopAtLayer1
-			if allAmbiguous && config.EnableAmbiguityPassThrough {
-				shouldStop = false
+			if layer2Err != nil {
+				return nil, fmt.Errorf("layer2 check failed: %w", layer2Err)
 			}
 
-			if shouldStop && !allAmbiguous {
+			// 处理 Layer2 结果
+			result.Layer2Result = layer2Result
+			result.TotalMatches += layer2Result.TotalMatches
+			if layer2Result.HasMatch && config.StopAtLayer2 {
 				result.Passed = false
-				result.RiskLevel = layer1Result.RiskLevel
-				result.Message = fmt.Sprintf("文本包含敏感内容（Layer1 匹配）: %v", layer1Result.Categories)
+				result.RiskLevel = layer2Result.RiskLevel
+				result.Message = fmt.Sprintf("文本包含敏感内容（Layer2 匹配）: %v", layer2Result.Categories)
 				return result, nil
 			}
 		}
-	}
+	} else {
+		// ========== 原始流程：Layer1 和 Layer2 并发执行 ==========
+		var wg sync.WaitGroup
+		var layer1Err, layer2Err error
+		var layer1Result *layer1_speed.Layer1Result
+		var layer2Result *layer2_semantic.Layer2Result
 
-	// 处理Layer2结果
-	if config.EnableLayer2 && layer2Result != nil {
-		result.Layer2Result = layer2Result
-		result.TotalMatches += layer2Result.TotalMatches
+		// Layer 1: 快速匹配层
+		if config.EnableLayer1 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				layer1Start := time.Now()
+				result, err := o.layer1Service.CheckText(tenantID, text)
+				if o.logger != nil {
+					o.logger.Debug("Layer1 execution completed",
+						zap.String("tenantID", tenantID.String()),
+						zap.Duration("duration", time.Since(layer1Start)))
+				}
+				if err != nil {
+					layer1Err = fmt.Errorf("layer1 check failed: %w", err)
+					return
+				}
+				layer1Result = result
+			}()
+		}
 
-		// 如果第二层匹配到敏感词，且配置为在第二层停止
-		if layer2Result.HasMatch && config.StopAtLayer2 {
-			result.Passed = false
-			result.RiskLevel = layer2Result.RiskLevel
-			result.Message = fmt.Sprintf("文本包含敏感内容（Layer2 匹配）: %v", layer2Result.Categories)
-			return result, nil
+		// Layer 2: 语义检索层
+		if config.EnableLayer2 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				layer2Start := time.Now()
+				result, err := o.layer2Service.SemanticSearch(
+					tenantID,
+					text,
+					config.Layer2Threshold,
+					config.Layer2Limit,
+					nil, // filters
+				)
+				if o.logger != nil {
+					o.logger.Debug("Layer2 execution completed",
+						zap.String("tenantID", tenantID.String()),
+						zap.Duration("duration", time.Since(layer2Start)))
+				}
+				if err != nil {
+					layer2Err = fmt.Errorf("layer2 check failed: %w", err)
+					return
+				}
+				layer2Result = result
+			}()
+		}
+
+		// 等待Layer1和Layer2完成
+		wg.Wait()
+
+		// 检查错误
+		if layer1Err != nil {
+			return nil, layer1Err
+		}
+		if layer2Err != nil {
+			return nil, layer2Err
+		}
+
+		// 处理Layer1结果
+		if config.EnableLayer1 && layer1Result != nil {
+			result.Layer1Result = layer1Result
+			result.TotalMatches += len(layer1Result.MatchedWords)
+
+			if layer1Result.HasMatch {
+				allAmbiguous := layer1Result.HasAmbiguity &&
+					len(layer1Result.AmbiguousMatches) == len(layer1Result.MatchedWords)
+
+				shouldStop := config.StopAtLayer1
+				if allAmbiguous && config.EnableAmbiguityPassThrough {
+					shouldStop = false
+				}
+
+				if shouldStop && !allAmbiguous {
+					result.Passed = false
+					result.RiskLevel = layer1Result.RiskLevel
+					result.Message = fmt.Sprintf("文本包含敏感内容（Layer1 匹配）: %v", layer1Result.Categories)
+					return result, nil
+				}
+			}
+		}
+
+		// 处理Layer2结果
+		if config.EnableLayer2 && layer2Result != nil {
+			result.Layer2Result = layer2Result
+			result.TotalMatches += layer2Result.TotalMatches
+
+			// 如果第二层匹配到敏感词，且配置为在第二层停止
+			if layer2Result.HasMatch && config.StopAtLayer2 {
+				result.Passed = false
+				result.RiskLevel = layer2Result.RiskLevel
+				result.Message = fmt.Sprintf("文本包含敏感内容（Layer2 匹配）: %v", layer2Result.Categories)
+				return result, nil
+			}
 		}
 	}
 
