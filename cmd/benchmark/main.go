@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -29,6 +30,8 @@ func main() {
 	queueTest := flag.Bool("queue", false, "Run queue benchmark instead of direct benchmark")
 	configPath := flag.String("config", "config.yaml", "Path to config file")
 	mode := flag.String("mode", "full", "Detection mode: full, basic (layer1 only), semantic (layer1+layer2)")
+	randomText := flag.Bool("random", false, "Use random test text to avoid cache hits")
+	tenantID := flag.String("tenant", "", "Tenant ID to use for testing (if not provided, a new one will be generated)")
 	flag.Parse()
 
 	// 加载配置
@@ -104,8 +107,28 @@ func main() {
 		}
 	}()
 
-	// 生成测试租户ID
-	tenantID := uuid.New()
+	// 解析或生成测试租户ID
+	var testTenantID uuid.UUID
+	if *tenantID != "" {
+		var err error
+		testTenantID, err = uuid.Parse(*tenantID)
+		if err != nil {
+			log.Fatalf("Invalid tenant ID: %v", err)
+		}
+		fmt.Printf("Using provided tenant ID: %s\n", testTenantID)
+	} else {
+		testTenantID = uuid.New()
+		fmt.Printf("Generated new tenant ID: %s\n", testTenantID)
+	}
+
+	// 预热服务
+	fmt.Println("Warming up services...")
+	warmupStart := time.Now()
+	if err := orchestratorService.Warmup([]uuid.UUID{testTenantID}); err != nil {
+		fmt.Printf("Warmup completed with warnings: %v\n", err)
+	} else {
+		fmt.Printf("Warmup completed in %v\n", time.Since(warmupStart))
+	}
 
 	if *queueTest {
 		// 运行队列性能测试
@@ -114,7 +137,8 @@ func main() {
 			queueService,
 			*totalRequests,
 			*testText,
-			tenantID,
+			testTenantID,
+			*randomText,
 		)
 		if err != nil {
 			log.Fatalf("Failed to run queue benchmark: %v", err)
@@ -137,12 +161,16 @@ func main() {
 
 		// 运行直接性能测试
 		fmt.Printf("Running direct benchmark in %s mode...\n", *mode)
+		if *randomText {
+			fmt.Println("Using random test text to avoid cache hits")
+		}
 		benchmarkConfig := benchmark.BenchmarkConfig{
 			TotalRequests:      *totalRequests,
 			ConcurrentRequests: *concurrentRequests,
 			TestText:           *testText,
-			TenantID:           tenantID,
+			TenantID:           testTenantID,
 			Config:             orchConfig,
+			UseRandomText:      *randomText,
 		}
 
 		result, err := benchmark.RunBenchmark(

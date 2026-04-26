@@ -51,3 +51,4 @@ migrations/
 docs/*.csv
 docs/optimization/
 docs/technical-decisions/
+docs/mock-data/

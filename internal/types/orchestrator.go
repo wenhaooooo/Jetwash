@@ -21,6 +21,9 @@ type OrchestratorResult struct {
 	// 统计信息
 	TotalMatches  int   `json:"total_matches"`
 	ExecutionTime int64 `json:"execution_time"` // 毫秒
+
+	// 是否来自缓存
+	FromCache bool `json:"from_cache"`
 }
 
 // OrchestratorConfig 编排配置

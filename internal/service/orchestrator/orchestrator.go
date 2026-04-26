@@ -58,6 +58,9 @@ type Orchestrator interface {
 
 	// CheckTextWithConfigAndContext 使用配置和上下文检查文本
 	CheckTextWithConfigAndContext(tenantID uuid.UUID, text string, config *types.OrchestratorConfig, context *layer3_reason.ReasonContext) (*types.OrchestratorResult, error)
+
+	// Warmup 预热所有服务
+	Warmup(tenantIDs []uuid.UUID) error
 }
 
 // orchestrator 编排器实现
@@ -133,6 +136,7 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 			}
 			var result types.OrchestratorResult
 			if err := json.Unmarshal([]byte(cachedResult), &result); err == nil {
+				result.FromCache = true
 				return &result, nil
 			}
 		} else {
@@ -726,6 +730,67 @@ func (o *orchestrator) ensureLayer1Initialized(tenantID uuid.UUID) error {
 	o.layer1Cache.Store(tenantIDStr, layer1_cache_entry{
 		lastUpdated: time.Now(),
 	})
+
+	return nil
+}
+
+// Warmup 预热所有服务
+func (o *orchestrator) Warmup(tenantIDs []uuid.UUID) error {
+	if o.logger != nil {
+		o.logger.Info("Starting orchestrator warmup...")
+	}
+
+	startTime := time.Now()
+
+	// 1. 预热 Layer1 AC 自动机（为每个租户加载敏感词）
+	if o.logger != nil {
+		o.logger.Info("Warming up Layer1 automaton...")
+	}
+	for _, tenantID := range tenantIDs {
+		if err := o.ensureLayer1Initialized(tenantID); err != nil {
+			if o.logger != nil {
+				o.logger.Warn("Failed to warmup Layer1 for tenant",
+					zap.String("tenantID", tenantID.String()),
+					zap.Error(err))
+			}
+		} else if o.logger != nil {
+			o.logger.Debug("Layer1 warmed up for tenant",
+				zap.String("tenantID", tenantID.String()))
+		}
+	}
+
+	// 2. 预热 LLM 模型（发送一个测试请求让模型加载到内存）
+	if o.logger != nil {
+		o.logger.Info("Warming up Layer3 LLM model...")
+	}
+	if o.layer3Service != nil {
+		warmupStart := time.Now()
+		// 发送一个简单的测试请求来预热模型
+		_, err := o.layer3Service.ReasonText(
+			uuid.New(),
+			"预热测试",
+			layer3_reason.NewReasonContext(),
+		)
+		if err != nil {
+			if o.logger != nil {
+				o.logger.Warn("Failed to warmup Layer3 LLM",
+					zap.Error(err))
+			}
+		} else if o.logger != nil {
+			o.logger.Info("Layer3 LLM warmed up",
+				zap.Duration("duration", time.Since(warmupStart)))
+		}
+	}
+
+	// 3. 预热 Layer2 语义检索（可选，会在首次请求时自动加载）
+	if o.logger != nil {
+		o.logger.Info("Layer2 semantic search will be warmed up on first request")
+	}
+
+	if o.logger != nil {
+		o.logger.Info("Orchestrator warmup completed",
+			zap.Duration("totalDuration", time.Since(startTime)))
+	}
 
 	return nil
 }

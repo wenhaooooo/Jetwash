@@ -8,7 +8,7 @@ database:
   host: localhost
   port: 15432
   user: postgres
-  password: jetwashpostgres
+  password: jetwash-postgres
   dbname: jetwash
   sslmode: disable
   max_open_conns: 100
