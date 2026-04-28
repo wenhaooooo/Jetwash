@@ -331,30 +331,98 @@ go run cmd/server/main.go
 
 ## 🧪 性能测试
 
-### 运行性能测试
+### 预热机制
+
+系统包含预热机制，在启动时预加载关键组件以优化首次请求性能：
+
+- **Layer1 AC 自动机**：为指定租户预加载敏感词（在内存中构建 AC 自动机）
+- **Layer3 LLM 模型**：发送测试请求将 Ollama 模型加载到内存
+- **优势**：将首次请求延迟从秒级降低到毫秒级
+
+### Benchmark 工具
+
+我们提供三个 benchmark 工具来测试不同场景：
+
+#### 1. `benchmark` - 原始性能测试工具
+
+支持随机文本生成、队列模式和不同检测模式。
 
 ```bash
-# 编译性能测试工具
+# 编译所有 benchmark 工具
 go build -o bin/benchmark cmd/benchmark/main.go
 
-# 运行直接检测测试（默认100个请求，10个并发）
-./bin/benchmark
+# 随机文本测试（混合敏感词）
+./bin/benchmark -random -total 100 -concurrent 5 \
+  -tenant a8102056-2b5d-4d92-b5e8-083bd96ec523
 
-# 自定义测试参数
-./bin/benchmark -total 1000 -concurrent 50 -text "测试文本内容"
+# 指定模式测试
+./bin/benchmark -mode semantic -total 100 -concurrent 5
 
-# 运行队列模式测试
+# 队列模式测试
 ./bin/benchmark -queue -total 1000
 
 # 使用自定义配置文件
 ./bin/benchmark -config custom-config.yaml
 ```
 
+#### 2. `benchmark_normal` - 纯非敏感词测试
+
+测试快速放行路径（Layer1 快速放行），不调用 LLM。
+
+```bash
+# 编译并运行
+go build -o bin/benchmark_normal cmd/benchmark_normal/main.go
+./bin/benchmark_normal -total 1000 -concurrent 100
+
+# 预期性能：QPS 1500+，延迟 < 1ms
+```
+
+#### 3. `benchmark_fix` - 混合文本测试（可配置比例）
+
+模拟真实流量，可配置敏感词比例。
+
+```bash
+# 编译并运行
+go build -o bin/benchmark_fix cmd/benchmark_fix/main.go
+
+# 30% 敏感词 + 70% 非敏感词
+./bin/benchmark_fix -total 100 -concurrent 5 -ratio 0.3 \
+  -tenant a8102056-2b5d-4d92-b5e8-083bd96ec523
+
+# 10% 敏感词（更接近真实场景）
+./bin/benchmark_fix -total 200 -concurrent 5 -ratio 0.1 \
+  -tenant a8102056-2b5d-4d92-b5e8-083bd96ec523
+```
+
+### Benchmark 参数说明
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `-total` | 总请求数 | 1000 |
+| `-concurrent` | 并发请求数 | 100 |
+| `-ratio` | 敏感词比例 (0-1) | 0.1 (10%) |
+| `-tenant` | 指定租户ID | 自动生成 |
+| `-random` | 生成随机文本 | false |
+| `-mode` | 检测模式 (full/basic/semantic) | full |
+| `-unique` | 添加唯一后缀 | true |
+| `-queue` | 队列模式测试 | false |
+
+### 性能对比
+
+| 工具 | 场景 | 预期 QPS | LLM 调用 |
+|------|------|----------|----------|
+| benchmark_normal | 100% 正常文本 | 1500+ | 0% |
+| benchmark_fix (10%) | 10% 敏感词 | 50-100 | 5-10% |
+| benchmark_fix (30%) | 30% 敏感词 | 20-50 | 15-20% |
+| benchmark (full) | 混合 + LLM | < 5 | 取决于内容 |
+
 ### 性能指标说明
 
 - **QPS (Queries Per Second)**: 每秒处理的请求数
 - **平均延迟**: 所有请求的平均响应时间
 - **P50/P95/P99 延迟**: 50%/95%/99% 的请求响应时间
+- **缓存命中率**: 从缓存服务的请求百分比
+- **各层触发分布**: 统计哪些检测层被触发
 - **成功率**: 请求成功的百分比
 - **总耗时**: 所有请求完成的总时间
 

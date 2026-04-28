@@ -327,30 +327,98 @@ go run cmd/server/main.go
 
 ## 🧪 Performance Testing
 
-### Run Performance Tests
+### Warmup Mechanism
+
+The system includes a warmup mechanism that preloads critical components on startup to optimize first-request performance:
+
+- **Layer1 AC Automaton**: Preloads sensitive words for specified tenants (builds AC automaton in memory)
+- **Layer3 LLM Model**: Sends a test request to load the Ollama model into memory
+- **Benefit**: Reduces first-request latency from seconds to milliseconds
+
+### Benchmark Tools
+
+We provide three benchmark tools to test different scenarios:
+
+#### 1. `benchmark` - Original Performance Test Tool
+
+Supports random text generation, queue mode, and different detection modes.
 
 ```bash
-# Build performance testing tool
+# Build all benchmark tools
 go build -o bin/benchmark cmd/benchmark/main.go
 
-# Run direct detection test (default 100 requests, 10 concurrent)
-./bin/benchmark
+# Random text test (mixed sensitive words)
+./bin/benchmark -random -total 100 -concurrent 5 \
+  -tenant a8102056-2b5d-4d92-b5e8-083bd96ec523
 
-# Custom test parameters
-./bin/benchmark -total 1000 -concurrent 50 -text "test text content"
+# Test with specific mode
+./bin/benchmark -mode semantic -total 100 -concurrent 5
 
-# Run queue mode test
+# Queue mode test
 ./bin/benchmark -queue -total 1000
 
-# Use custom config file
+# Custom config file
 ./bin/benchmark -config custom-config.yaml
 ```
+
+#### 2. `benchmark_normal` - Non-Sensitive Word Test
+
+Tests the fast-pass path (Layer1 quick release), no LLM calls.
+
+```bash
+# Build and run
+go build -o bin/benchmark_normal cmd/benchmark_normal/main.go
+./bin/benchmark_normal -total 1000 -concurrent 100
+
+# Expected performance: QPS 1500+, latency < 1ms
+```
+
+#### 3. `benchmark_fix` - Mixed Text Test (Configurable Ratio)
+
+Simulates real-world traffic with configurable sensitive word ratio.
+
+```bash
+# Build and run
+go build -o bin/benchmark_fix cmd/benchmark_fix/main.go
+
+# 30% sensitive words + 70% normal words
+./bin/benchmark_fix -total 100 -concurrent 5 -ratio 0.3 \
+  -tenant a8102056-2b5d-4d92-b5e8-083bd96ec523
+
+# 10% sensitive words (closer to real-world scenario)
+./bin/benchmark_fix -total 200 -concurrent 5 -ratio 0.1 \
+  -tenant a8102056-2b5d-4d92-b5e8-083bd96ec523
+```
+
+### Benchmark Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `-total` | Total requests | 1000 |
+| `-concurrent` | Concurrent requests | 100 |
+| `-ratio` | Sensitive word ratio (0-1) | 0.1 (10%) |
+| `-tenant` | Specify tenant ID | Auto-generated |
+| `-random` | Generate random text | false |
+| `-mode` | Detection mode (full/basic/semantic) | full |
+| `-unique` | Add unique suffix | true |
+| `-queue` | Queue mode test | false |
+
+### Performance Comparison
+
+| Tool | Scenario | Expected QPS | LLM Calls |
+|------|----------|--------------|-----------|
+| benchmark_normal | 100% normal text | 1500+ | 0% |
+| benchmark_fix (10%) | 10% sensitive words | 50-100 | 5-10% |
+| benchmark_fix (30%) | 30% sensitive words | 20-50 | 15-20% |
+| benchmark (full) | Mixed with LLM | < 5 | Depends on content |
 
 ### Performance Metrics
 
 - **QPS (Queries Per Second)**: Number of requests processed per second
 - **Average Latency**: Average response time for all requests
 - **P50/P95/P99 Latency**: Response time for 50%/95%/99% of requests
+- **Cache Hit Rate**: Percentage of requests served from cache
+- **Layer Distribution**: Statistics on which layers were triggered
 - **Success Rate**: Percentage of successful requests
 - **Total Duration**: Total time to complete all requests
 
