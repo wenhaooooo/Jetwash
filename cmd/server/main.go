@@ -113,6 +113,10 @@ func main() {
 	// 初始化 Orchestrator: 编排层
 	orchestratorService := orchestrator.NewOrchestrator(layer1Service, layer2Service, layer3Service, wordRepo, detectionHistoryService, redisClient, logger.GetLogger())
 
+	// 启动 LLM 异步审核 Worker（消费 Redis Stream，异步调用 LLM 推理）
+	llmReviewWorker := orchestrator.NewLLMReviewWorker(layer3Service, layer1Service, redisClient, wordRepo, logger.GetLogger())
+	go llmReviewWorker.Start(context.Background())
+
 	// 初始化队列服务
 	queueService := queue.NewQueueService(redisClient)
 

@@ -236,7 +236,7 @@ func (s *layer3Service) parseLLMResponse(response string) *Layer3Result {
 		DetectedWords: make([]string, 0),
 	}
 
-	// 简单解析响应（实际应用中应该使用更复杂的解析逻辑）
+	// 解析响应
 	lines := strings.Split(response, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)

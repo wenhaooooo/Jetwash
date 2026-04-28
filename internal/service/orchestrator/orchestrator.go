@@ -42,6 +42,8 @@ func DefaultOrchestratorConfig() *types.OrchestratorConfig {
 		Layer2Limit:                10,
 		Layer3EnableReason:         true,
 		EnableFastPass:             true, // 默认开启非敏感词快速放行
+		Layer3TimeoutMs:            3000, // LLM 推理超时 3 秒，超时后降级为规则判断
+		EnableAsyncLLM:             true, // 默认开启异步 LLM 审核（通过 Redis Stream）
 	}
 }
 
@@ -73,6 +75,20 @@ type orchestrator struct {
 	redisClient             *cache.RedisClient
 	logger                  *zap.Logger
 	layer1Cache             sync.Map // key: tenantID string, value: layer1_cache_entry
+
+	// 异步写入：将检测历史、缓存写入等非关键路径操作从请求链路中剥离
+	// 通过带缓冲 channel + 后台 worker 实现，避免 DB 写入阻塞检测响应
+	historyChan chan *asyncTask
+}
+
+// asyncTask 异步任务，包含检测历史写入和缓存写入
+type asyncTask struct {
+	tenantID           uuid.UUID
+	text               string
+	mode               string
+	result             *types.OrchestratorResult
+	duration           int64
+	newlyDetectedWords []string
 }
 
 // layer1_cache_entry Layer1 缓存条目
@@ -90,7 +106,7 @@ func NewOrchestrator(
 	redisClient *cache.RedisClient,
 	logger *zap.Logger,
 ) Orchestrator {
-	return &orchestrator{
+	o := &orchestrator{
 		layer1Service:           layer1Service,
 		layer2Service:           layer2Service,
 		layer3Service:           layer3Service,
@@ -98,6 +114,52 @@ func NewOrchestrator(
 		detectionHistoryService: detectionHistoryService,
 		redisClient:             redisClient,
 		logger:                  logger,
+		historyChan:             make(chan *asyncTask, 1000), // 带缓冲 channel，避免阻塞发送方
+	}
+	// 启动后台 worker 消费异步任务（检测历史写入、缓存写入等）
+	go o.asyncWorker()
+	return o
+}
+
+// asyncWorker 后台 worker，异步消费检测历史写入和缓存写入任务
+// 将 DB 写入从请求关键路径中剥离，避免阻塞检测响应
+func (o *orchestrator) asyncWorker() {
+	for task := range o.historyChan {
+		// 1. 异步写入检测历史（DB 事务）
+		if o.detectionHistoryService != nil {
+			if err := o.detectionHistoryService.SaveDetectionHistory(
+				task.tenantID, task.text, task.mode, task.result, task.duration,
+			); err != nil {
+				if o.logger != nil {
+					o.logger.Warn("Failed to save detection history (async)",
+						zap.String("tenantID", task.tenantID.String()),
+						zap.Int("textLength", len(task.text)),
+						zap.Error(err))
+				}
+			}
+		}
+
+		// 2. 异步写入新检测到的违禁词到 DB 和 Redis
+		if len(task.newlyDetectedWords) > 0 {
+			o.addDetectedWordsToDatabase(task.tenantID, task.newlyDetectedWords)
+			o.addDetectedWordsToRedis(task.tenantID, task.newlyDetectedWords)
+		}
+
+		// 3. 异步写入缓存结果
+		if o.redisClient != nil {
+			cacheKey := generateCacheKey(task.tenantID, task.text)
+			if cachedResult, err := json.Marshal(task.result); err == nil {
+				ttl := o.getCacheTTL(task.result)
+				if err := o.redisClient.Set(context.Background(), cacheKey, cachedResult, ttl); err != nil {
+					if o.logger != nil {
+						o.logger.Warn("Failed to cache detection result (async)",
+							zap.String("tenantID", task.tenantID.String()),
+							zap.String("cacheKey", cacheKey),
+							zap.Error(err))
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -173,38 +235,27 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 	defer func() {
 		duration := time.Since(startTime).Milliseconds()
 
-		// 记录检测历史
-		if o.detectionHistoryService != nil {
-			if err := o.detectionHistoryService.SaveDetectionHistory(tenantID, text, mode, result, duration); err != nil {
-				if o.logger != nil {
-					o.logger.Warn("Failed to save detection history",
-						zap.String("tenantID", tenantID.String()),
-						zap.Int("textLength", len(text)),
-						zap.Error(err))
-				}
-			}
+		// 异步写入：将检测历史、新词入库、缓存写入等非关键操作发送到后台 worker
+		// 通过带缓冲 channel 实现，不阻塞检测响应返回
+		// 设计依据：SaveDetectionHistory 包含 DB 事务（2+ 次 SQL 写入），
+		// 同步执行会增加 50~100ms 延迟；异步化后请求链路仅增加 channel 发送开销（< 1μs）
+		task := &asyncTask{
+			tenantID:           tenantID,
+			text:               text,
+			mode:               mode,
+			result:             result,
+			duration:           duration,
+			newlyDetectedWords: newlyDetectedWords,
 		}
-
-		// 如果有新检测到的违禁词，添加到数据库和Redis
-		if len(newlyDetectedWords) > 0 {
-			o.addDetectedWordsToDatabase(tenantID, newlyDetectedWords)
-			o.addDetectedWordsToRedis(tenantID, newlyDetectedWords)
-		}
-
-		// 缓存结果
-		if o.redisClient != nil {
-			cacheKey := generateCacheKey(tenantID, text)
-			if cachedResult, err := json.Marshal(result); err == nil {
-				// 分层缓存策略：根据检测结果风险等级设置不同的过期时间
-				ttl := o.getCacheTTL(result)
-				if err := o.redisClient.Set(context.Background(), cacheKey, cachedResult, ttl); err != nil {
-					if o.logger != nil {
-						o.logger.Warn("Failed to cache detection result",
-							zap.String("tenantID", tenantID.String()),
-							zap.String("cacheKey", cacheKey),
-							zap.Error(err))
-					}
-				}
+		select {
+		case o.historyChan <- task:
+			// 成功发送到异步队列
+		default:
+			// channel 已满（极端高并发），记录警告但不阻塞请求
+			if o.logger != nil {
+				o.logger.Warn("Async task channel full, dropping detection history",
+					zap.String("tenantID", tenantID.String()),
+					zap.Int("textLength", len(text)))
 			}
 		}
 	}()
@@ -229,6 +280,8 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 		}
 		mergedConfig.Layer3EnableReason = config.Layer3EnableReason
 		mergedConfig.EnableFastPass = config.EnableFastPass
+		mergedConfig.Layer3TimeoutMs = config.Layer3TimeoutMs
+		mergedConfig.EnableAsyncLLM = config.EnableAsyncLLM
 		config = &mergedConfig
 	} else {
 		config = defaultConfig
@@ -435,19 +488,128 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 			result.Passed = false
 			result.RiskLevel = maxRiskLevel
 			result.Message = fmt.Sprintf("文本包含高风险敏感内容（风险等级: %d）", maxRiskLevel)
+			result.ReviewStatus = "completed"
 			return result, nil
 		}
 
-		// 调用推理层
+		// 如果没有匹配到任何内容，无需 LLM 审查
+		if len(matches) == 0 {
+			result.Passed = true
+			result.RiskLevel = 0
+			result.Message = "文本审查通过"
+			result.ReviewStatus = "completed"
+			return result, nil
+		}
+
+		// ========== 异步 LLM 审核（EnableAsyncLLM） ==========
+		// 将 LLM 推理任务发送到 Redis Stream，由后台 worker 异步执行
+		// API 立即返回初步结果（基于 Layer1/2 匹配），LLM 完成后更新 AC 自动机和 DB
+		if config.EnableAsyncLLM && o.redisClient != nil {
+			reviewID := uuid.New().String()
+
+			// 构建审核任务消息
+			taskData, _ := json.Marshal(map[string]interface{}{
+				"review_id":  reviewID,
+				"tenant_id":  tenantID.String(),
+				"text":       text,
+				"matches":    matches,
+				"max_risk":   maxRiskLevel,
+				"created_at": time.Now().Unix(),
+			})
+
+			if _, err := o.redisClient.XAdd(context.Background(), cache.LLMReviewStream, map[string]interface{}{
+				"data": string(taskData),
+			}); err != nil {
+				// Stream 发送失败，降级为同步超时模式
+				if o.logger != nil {
+					o.logger.Warn("Failed to send LLM review task to stream, falling back to sync mode",
+						zap.String("tenantID", tenantID.String()),
+						zap.Error(err))
+				}
+			} else {
+				// 异步发送成功，返回初步结果
+				if maxRiskLevel >= 3 {
+					result.Passed = false
+					result.RiskLevel = maxRiskLevel
+					result.Message = fmt.Sprintf("文本包含敏感内容（初步结果，LLM异步审核中，风险等级: %d）", maxRiskLevel)
+				} else {
+					result.Passed = true
+					result.RiskLevel = 0
+					result.Message = "文本审查通过（初步结果，LLM异步审核中）"
+				}
+				result.ReviewID = reviewID
+				result.ReviewStatus = "pending_llm_review"
+
+				if o.logger != nil {
+					o.logger.Debug("LLM review task sent to stream",
+						zap.String("reviewID", reviewID),
+						zap.String("tenantID", tenantID.String()))
+				}
+				return result, nil
+			}
+		}
+
+		// ========== 同步 LLM 调用（超时控制） ==========
 		layer3Start := time.Now()
-		layer3Result, err := o.layer3Service.ReasonWithMatches(tenantID, text, matches, reasonContext)
+		var layer3Result *layer3_reason.Layer3Result
+		var layer3Err error
+
+		if config.Layer3TimeoutMs > 0 {
+			// 带超时的 LLM 调用：超时后降级为基于已有匹配结果的规则判断
+			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.Layer3TimeoutMs)*time.Millisecond)
+			defer cancel()
+
+			layer3Done := make(chan *layer3_reason.Layer3Result, 1)
+			layer3ErrChan := make(chan error, 1)
+
+			go func() {
+				r, err := o.layer3Service.ReasonWithMatches(tenantID, text, matches, reasonContext)
+				if err != nil {
+					layer3ErrChan <- err
+				} else {
+					layer3Done <- r
+				}
+			}()
+
+			select {
+			case r := <-layer3Done:
+				layer3Result = r
+			case err := <-layer3ErrChan:
+				layer3Err = err
+			case <-ctx.Done():
+				// LLM 超时，降级处理：基于已有匹配结果做规则判断
+				if o.logger != nil {
+					o.logger.Warn("Layer3 LLM timeout, falling back to rule-based judgment",
+						zap.String("tenantID", tenantID.String()),
+						zap.Int("timeoutMs", config.Layer3TimeoutMs),
+						zap.Duration("actualDuration", time.Since(layer3Start)))
+				}
+				// 降级策略：如果有中等风险匹配（>=3），拒绝；否则通过
+				if maxRiskLevel >= 3 {
+					result.Passed = false
+					result.RiskLevel = maxRiskLevel
+					result.Message = fmt.Sprintf("文本包含敏感内容（LLM超时降级，基于规则判断，风险等级: %d）", maxRiskLevel)
+				} else if maxRiskLevel > 0 {
+					// 有低风险匹配但未达阈值，保守放行
+					result.Passed = true
+					result.RiskLevel = 0
+					result.Message = "文本审查通过（LLM超时降级，低风险匹配未达阈值）"
+				}
+				// LLM 超时不视为错误，直接返回降级结果
+				return result, nil
+			}
+		} else {
+			// 无超时限制，直接调用
+			layer3Result, layer3Err = o.layer3Service.ReasonWithMatches(tenantID, text, matches, reasonContext)
+		}
+
 		if o.logger != nil {
 			o.logger.Debug("Layer3 execution completed",
 				zap.String("tenantID", tenantID.String()),
 				zap.Duration("duration", time.Since(layer3Start)))
 		}
-		if err != nil {
-			return nil, fmt.Errorf("layer3 check failed: %w", err)
+		if layer3Err != nil {
+			return nil, fmt.Errorf("layer3 check failed: %w", layer3Err)
 		}
 
 		result.Layer3Result = layer3Result

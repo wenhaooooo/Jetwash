@@ -24,6 +24,11 @@ type OrchestratorResult struct {
 
 	// 是否来自缓存
 	FromCache bool `json:"from_cache"`
+
+	// 异步 LLM 审核相关字段
+	// 当 EnableAsyncLLM 开启时，Layer3 推理异步执行，API 立即返回初步结果
+	ReviewID     string `json:"review_id,omitempty"`     // 审核任务 ID，可用于查询最终结果
+	ReviewStatus string `json:"review_status,omitempty"` // 审核状态: completed / pending_llm_review
 }
 
 // OrchestratorConfig 编排配置
@@ -52,4 +57,14 @@ type OrchestratorConfig struct {
 	// 非敏感词快速放行：Layer1 无匹配时跳过 Layer2/3，直接返回通过
 	// 适用于非敏感词占绝大多数（95%+）的高并发场景，可显著降低延迟和 Embedding API 开销
 	EnableFastPass bool `json:"enable_fast_pass"`
+
+	// Layer3 超时控制（毫秒）：LLM 推理的最大允许耗时
+	// 超时后降级为基于已有匹配结果的规则判断，不阻塞请求
+	// 设为 0 表示不限制超时
+	Layer3TimeoutMs int `json:"layer3_timeout_ms"`
+
+	// 异步 LLM 审核：Layer1/2 完成后立即返回初步结果，Layer3 通过 Redis Stream 异步执行
+	// 适用于"先发布后审核"场景，用最终一致性换取零 LLM 延迟
+	// 开启后 Layer3TimeoutMs 不再生效（LLM 不在请求链路上）
+	EnableAsyncLLM bool `json:"enable_async_llm"`
 }

@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -98,4 +99,48 @@ func (r *RedisClient) SMembers(ctx context.Context, key string) ([]string, error
 
 func (r *RedisClient) Expire(ctx context.Context, key string, expiration time.Duration) error {
 	return r.client.Expire(ctx, key, expiration).Err()
+}
+
+// ========== Redis Stream 操作（用于异步 LLM 审核 MQ） ==========
+
+const (
+	// LLMReviewStream Redis Stream 名称
+	LLMReviewStream = "llm_review_stream"
+	// LLMReviewGroup 消费组名称
+	LLMReviewGroup = "llm_review_workers"
+)
+
+// XAdd 向 Redis Stream 添加消息
+func (r *RedisClient) XAdd(ctx context.Context, stream string, values map[string]interface{}) (string, error) {
+	return r.client.XAdd(ctx, &redis.XAddArgs{
+		Stream: stream,
+		Values: values,
+		MaxLen: 10000, // 保留最近 10000 条消息，防止 Stream 无限增长
+	}).Result()
+}
+
+// XReadGroup 从消费组读取消息（阻塞模式）
+func (r *RedisClient) XReadGroup(ctx context.Context, stream, group, consumer string, count int64) ([]redis.XStream, error) {
+	return r.client.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group:    group,
+		Consumer: consumer,
+		Streams:  []string{stream, ">"},
+		Count:    count,
+		Block:    5 * time.Second, // 5 秒阻塞等待，避免空轮询
+	}).Result()
+}
+
+// XAck 确认消息已处理
+func (r *RedisClient) XAck(ctx context.Context, stream, group string, ids ...string) error {
+	return r.client.XAck(ctx, stream, group, ids...).Err()
+}
+
+// XGroupCreate 创建消费组（如果不存在）
+func (r *RedisClient) XGroupCreate(ctx context.Context, stream, group, start string) error {
+	err := r.client.XGroupCreateMkStream(ctx, stream, group, start).Err()
+	if err != nil && strings.Contains(err.Error(), "BUSYGROUP") {
+		// 消费组已存在，不是错误
+		return nil
+	}
+	return err
 }
