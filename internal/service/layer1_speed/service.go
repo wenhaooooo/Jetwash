@@ -121,13 +121,9 @@ func (s *layer1Service) AddWord(word string, payload *Payload) error {
 	normalizedWord := s.NormalizeText(word)
 	payload.WordText = normalizedWord
 
-	// 插入敏感词
-	if err := automaton.Insert(normalizedWord, payload); err != nil {
+	if err := automaton.InsertAndBuildFail(normalizedWord, payload); err != nil {
 		return fmt.Errorf("failed to insert word: %w", err)
 	}
-
-	// 重新构建失败指针
-	automaton.BuildFail()
 
 	return nil
 }

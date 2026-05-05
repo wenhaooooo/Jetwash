@@ -256,8 +256,7 @@ func (h *NormalHandler) BatchImportWords(c *gin.Context) {
 		"code":    ecode.Success,
 		"message": "Words imported successfully",
 		"data": gin.H{
-			"total":    len(words),
-			"imported": len(words),
+			"total": len(words),
 		},
 	})
 }

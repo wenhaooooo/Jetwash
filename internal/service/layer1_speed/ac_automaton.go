@@ -69,20 +69,45 @@ func (ac *ACAutomaton) Insert(word string, payload *Payload) error {
 	return nil
 }
 
-// BuildFail 构建失败指针
-func (ac *ACAutomaton) BuildFail() {
+// InsertAndBuildFail 原子地插入敏感词并重建失败指针（单次加锁，保证并发安全）
+func (ac *ACAutomaton) InsertAndBuildFail(word string, payload *Payload) error {
+	if word == "" {
+		return fmt.Errorf("word cannot be empty")
+	}
+
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
 
+	node := ac.root
+	for _, r := range word {
+		if _, exists := node.children[r]; !exists {
+			node.children[r] = &ACNode{
+				children: make(map[rune]*ACNode),
+				fail:     nil,
+				payloads: make([]*Payload, 0),
+				isEnd:    false,
+			}
+		}
+		node = node.children[r]
+	}
+
+	node.isEnd = true
+	node.payloads = append(node.payloads, payload)
+
+	ac.buildFailUnlocked()
+
+	return nil
+}
+
+// buildFailUnlocked 内部方法：构建失败指针（调用者需持有写锁）
+func (ac *ACAutomaton) buildFailUnlocked() {
 	queue := make([]*ACNode, 0)
 
-	// 第一层节点的失败指针指向根节点
 	for _, child := range ac.root.children {
 		child.fail = ac.root
 		queue = append(queue, child)
 	}
 
-	// BFS 构建其他节点的失败指针
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
@@ -90,7 +115,6 @@ func (ac *ACAutomaton) BuildFail() {
 		for r, child := range current.children {
 			queue = append(queue, child)
 
-			// 找到父节点的失败指针
 			failNode := current.fail
 			for failNode != nil {
 				if nextNode, exists := failNode.children[r]; exists {
@@ -100,17 +124,23 @@ func (ac *ACAutomaton) BuildFail() {
 				failNode = failNode.fail
 			}
 
-			// 如果没有找到，失败指针指向根节点
 			if child.fail == nil {
 				child.fail = ac.root
 			}
 
-			// 合并失败指针的 payloads
 			if child.fail.isEnd {
 				child.payloads = append(child.payloads, child.fail.payloads...)
 			}
 		}
 	}
+}
+
+// BuildFail 构建失败指针
+func (ac *ACAutomaton) BuildFail() {
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+
+	ac.buildFailUnlocked()
 }
 
 // Match 匹配文本中的敏感词

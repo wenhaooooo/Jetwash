@@ -563,7 +563,7 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 			layer3ErrChan := make(chan error, 1)
 
 			go func() {
-				r, err := o.layer3Service.ReasonWithMatches(tenantID, text, matches, reasonContext)
+				r, err := o.layer3Service.ReasonWithMatches(ctx, tenantID, text, matches, reasonContext)
 				if err != nil {
 					layer3ErrChan <- err
 				} else {
@@ -600,7 +600,7 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 			}
 		} else {
 			// 无超时限制，直接调用
-			layer3Result, layer3Err = o.layer3Service.ReasonWithMatches(tenantID, text, matches, reasonContext)
+			layer3Result, layer3Err = o.layer3Service.ReasonWithMatches(context.Background(), tenantID, text, matches, reasonContext)
 		}
 
 		if o.logger != nil {
@@ -929,6 +929,7 @@ func (o *orchestrator) Warmup(tenantIDs []uuid.UUID) error {
 		warmupStart := time.Now()
 		// 发送一个简单的测试请求来预热模型
 		_, err := o.layer3Service.ReasonText(
+			context.Background(),
 			uuid.New(),
 			"预热测试",
 			layer3_reason.NewReasonContext(),

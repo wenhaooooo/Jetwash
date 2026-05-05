@@ -2,6 +2,7 @@ package util
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -123,6 +124,57 @@ func (c *Client) GenerateText(prompt string) (string, error) {
 	}
 
 	resp, err := c.httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("ollama request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("ollama api error: status %d", resp.StatusCode)
+	}
+
+	var res ChatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return "", fmt.Errorf("decode response failed: %w", err)
+	}
+
+	if res.Message.Content == "" {
+		return "", fmt.Errorf("received empty response from ollama")
+	}
+
+	return res.Message.Content, nil
+}
+
+// GenerateTextWithContext 使用 context 生成文本（支持超时取消）
+func (c *Client) GenerateTextWithContext(ctx context.Context, prompt string) (string, error) {
+	if prompt == "" {
+		return "", fmt.Errorf("prompt cannot be empty")
+	}
+
+	url := fmt.Sprintf("%s/api/chat", c.host)
+	reqBody := ChatRequest{
+		Model: c.model,
+		Messages: []Message{
+			{
+				Role:    "user",
+				Content: prompt,
+			},
+		},
+		Stream: false,
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("marshal request failed: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("create request failed: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("ollama request failed: %w", err)
 	}

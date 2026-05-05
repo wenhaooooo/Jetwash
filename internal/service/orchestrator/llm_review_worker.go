@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -92,7 +93,7 @@ func (w *LLMReviewWorker) Start(ctx context.Context) {
 func (w *LLMReviewWorker) processOne(ctx context.Context) {
 	streams, err := w.redisClient.XReadGroup(ctx, cache.LLMReviewStream, cache.LLMReviewGroup, w.consumerName, 1)
 	if err != nil {
-		if err != redis.Nil {
+		if err == redis.Nil {
 			if w.logger != nil {
 				w.logger.Debug("No messages in LLM review stream")
 			}
@@ -122,7 +123,6 @@ func (w *LLMReviewWorker) processOne(ctx context.Context) {
 
 // handleMessage 处理单条消息
 func (w *LLMReviewWorker) handleMessage(ctx context.Context, msgID string, values map[string]interface{}) {
-	_ = ctx
 	start := time.Now()
 
 	// 解析任务数据
@@ -156,7 +156,7 @@ func (w *LLMReviewWorker) handleMessage(ctx context.Context, msgID string, value
 	}
 
 	// 调用 LLM 推理
-	layer3Result, err := w.layer3Service.ReasonWithMatches(tenantID, task.Text, task.Matches, nil)
+	layer3Result, err := w.layer3Service.ReasonWithMatches(ctx, tenantID, task.Text, task.Matches, nil)
 	if err != nil {
 		if w.logger != nil {
 			w.logger.Warn("LLM review failed",
@@ -227,27 +227,6 @@ func (w *LLMReviewWorker) handleMessage(ctx context.Context, msgID string, value
 
 // trimWord 清理词语
 func trimWord(word string) string {
-	// 简单清理：去除空格和方括号
-	word = trimAll(word, " ", "[", "]", "\"", "'")
+	word = strings.Trim(word, " []\"'")
 	return word
-}
-
-func trimAll(s string, cuts ...string) string {
-	for _, c := range cuts {
-		s = replaceAll(s, c, "")
-	}
-	return s
-}
-
-func replaceAll(s, old, new string) string {
-	result := ""
-	for i := 0; i < len(s); i++ {
-		if i+len(old) <= len(s) && s[i:i+len(old)] == old {
-			result += new
-			i += len(old) - 1
-		} else {
-			result += string(s[i])
-		}
-	}
-	return result
 }

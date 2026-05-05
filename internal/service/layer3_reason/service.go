@@ -2,6 +2,7 @@ package layer3_reason
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -16,10 +17,10 @@ import (
 // LLMProvider LLM 服务提供者接口
 type LLMProvider interface {
 	// GenerateText 生成文本
-	GenerateText(prompt string) (string, error)
+	GenerateText(ctx context.Context, prompt string) (string, error)
 
 	// GenerateTextWithMessages 使用消息列表生成文本
-	GenerateTextWithMessages(messages []Message) (string, error)
+	GenerateTextWithMessages(ctx context.Context, messages []Message) (string, error)
 }
 
 // Message LLM 消息
@@ -43,10 +44,10 @@ type Layer3Result struct {
 // Layer3Service 第三层服务接口 - 推理层
 type Layer3Service interface {
 	// ReasonText 对文本进行推理分析
-	ReasonText(tenantID uuid.UUID, text string, context *ReasonContext) (*Layer3Result, error)
+	ReasonText(ctx context.Context, tenantID uuid.UUID, text string, context *ReasonContext) (*Layer3Result, error)
 
 	// ReasonWithMatches 基于匹配结果进行推理
-	ReasonWithMatches(tenantID uuid.UUID, text string, matches []MatchInfo, context *ReasonContext) (*Layer3Result, error)
+	ReasonWithMatches(ctx context.Context, tenantID uuid.UUID, text string, matches []MatchInfo, context *ReasonContext) (*Layer3Result, error)
 
 	// GeneratePrompt 生成 Prompt
 	GeneratePrompt(tenantID uuid.UUID, text string, matches []MatchInfo, context *ReasonContext) string
@@ -68,7 +69,7 @@ func NewLayer3Service(llmProvider LLMProvider) Layer3Service {
 }
 
 // ReasonText 对文本进行推理分析
-func (s *layer3Service) ReasonText(tenantID uuid.UUID, text string, context *ReasonContext) (*Layer3Result, error) {
+func (s *layer3Service) ReasonText(ctx context.Context, tenantID uuid.UUID, text string, context *ReasonContext) (*Layer3Result, error) {
 	if text == "" {
 		return nil, fmt.Errorf("text cannot be empty")
 	}
@@ -77,23 +78,20 @@ func (s *layer3Service) ReasonText(tenantID uuid.UUID, text string, context *Rea
 		context = NewReasonContext()
 	}
 
-	// 生成 Prompt
 	prompt := s.GeneratePrompt(tenantID, text, nil, context)
 
-	// 调用 LLM
-	response, err := s.llmProvider.GenerateText(prompt)
+	response, err := s.llmProvider.GenerateText(ctx, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate text: %w", err)
 	}
 
-	// 解析响应
 	result := s.parseLLMResponse(response)
 
 	return result, nil
 }
 
 // ReasonWithMatches 基于匹配结果进行推理
-func (s *layer3Service) ReasonWithMatches(tenantID uuid.UUID, text string, matches []MatchInfo, context *ReasonContext) (*Layer3Result, error) {
+func (s *layer3Service) ReasonWithMatches(ctx context.Context, tenantID uuid.UUID, text string, matches []MatchInfo, context *ReasonContext) (*Layer3Result, error) {
 	if text == "" {
 		return nil, fmt.Errorf("text cannot be empty")
 	}
@@ -102,16 +100,13 @@ func (s *layer3Service) ReasonWithMatches(tenantID uuid.UUID, text string, match
 		context = NewReasonContext()
 	}
 
-	// 生成 Prompt
 	prompt := s.GeneratePrompt(tenantID, text, matches, context)
 
-	// 调用 LLM
-	response, err := s.llmProvider.GenerateText(prompt)
+	response, err := s.llmProvider.GenerateText(ctx, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate text: %w", err)
 	}
 
-	// 解析响应
 	result := s.parseLLMResponse(response)
 
 	return result, nil
@@ -395,12 +390,12 @@ func NewMockLLMProvider(response string) *MockLLMProvider {
 }
 
 // GenerateText 生成文本
-func (m *MockLLMProvider) GenerateText(prompt string) (string, error) {
+func (m *MockLLMProvider) GenerateText(ctx context.Context, prompt string) (string, error) {
 	return m.Response, nil
 }
 
 // GenerateTextWithMessages 使用消息列表生成文本
-func (m *MockLLMProvider) GenerateTextWithMessages(messages []Message) (string, error) {
+func (m *MockLLMProvider) GenerateTextWithMessages(ctx context.Context, messages []Message) (string, error) {
 	return m.Response, nil
 }
 
@@ -425,16 +420,12 @@ func NewOpenAILLMProvider(apiKey, model string) *OpenAILLMProvider {
 }
 
 // GenerateText 生成文本
-func (o *OpenAILLMProvider) GenerateText(prompt string) (string, error) {
-	// TODO: 实现实际的 OpenAI API 调用
-	// 这里需要使用 http.Client 调用 OpenAI API
+func (o *OpenAILLMProvider) GenerateText(ctx context.Context, prompt string) (string, error) {
 	return "", fmt.Errorf("not implemented yet")
 }
 
 // GenerateTextWithMessages 使用消息列表生成文本
-func (o *OpenAILLMProvider) GenerateTextWithMessages(messages []Message) (string, error) {
-	// TODO: 实现实际的 OpenAI API 调用
-	// 这里需要使用 http.Client 调用 OpenAI API
+func (o *OpenAILLMProvider) GenerateTextWithMessages(ctx context.Context, messages []Message) (string, error) {
 	return "", fmt.Errorf("not implemented yet")
 }
 
@@ -445,6 +436,7 @@ type OnlineLLMProvider struct {
 	BaseURL     string
 	MaxTokens   int
 	Temperature float64
+	httpClient  *http.Client
 }
 
 // NewOnlineLLMProvider 创建在线 LLM 提供者
@@ -455,23 +447,25 @@ func NewOnlineLLMProvider(apiKey, model, baseURL string) *OnlineLLMProvider {
 		BaseURL:     baseURL,
 		MaxTokens:   65536,
 		Temperature: 1.0,
+		httpClient: &http.Client{
+			Timeout: 120 * time.Second,
+		},
 	}
 }
 
 // GenerateText 生成文本
-func (o *OnlineLLMProvider) GenerateText(prompt string) (string, error) {
+func (o *OnlineLLMProvider) GenerateText(ctx context.Context, prompt string) (string, error) {
 	messages := []Message{
 		{
 			Role:    "user",
 			Content: prompt,
 		},
 	}
-	return o.GenerateTextWithMessages(messages)
+	return o.GenerateTextWithMessages(ctx, messages)
 }
 
 // GenerateTextWithMessages 使用消息列表生成文本
-func (o *OnlineLLMProvider) GenerateTextWithMessages(messages []Message) (string, error) {
-	// 构建请求体
+func (o *OnlineLLMProvider) GenerateTextWithMessages(ctx context.Context, messages []Message) (string, error) {
 	reqBody := struct {
 		Model       string    `json:"model"`
 		Messages    []Message `json:"messages"`
@@ -491,25 +485,20 @@ func (o *OnlineLLMProvider) GenerateTextWithMessages(messages []Message) (string
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// 创建 HTTP 请求
-	req, err := http.NewRequest("POST", o.BaseURL+"/chat/completions", bytes.NewBuffer(data))
+	req, err := http.NewRequestWithContext(ctx, "POST", o.BaseURL+"/chat/completions", bytes.NewBuffer(data))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// 设置请求头
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+o.APIKey)
 
-	// 发送请求
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := o.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// 解析响应
 	var respBody struct {
 		Choices []struct {
 			Message Message `json:"message"`
@@ -545,16 +534,15 @@ func NewOllamaLLMProvider(host, model string) *OllamaLLMProvider {
 }
 
 // GenerateText 生成文本
-func (o *OllamaLLMProvider) GenerateText(prompt string) (string, error) {
-	return o.client.GenerateText(prompt)
+func (o *OllamaLLMProvider) GenerateText(ctx context.Context, prompt string) (string, error) {
+	return o.client.GenerateTextWithContext(ctx, prompt)
 }
 
 // GenerateTextWithMessages 使用消息列表生成文本
-func (o *OllamaLLMProvider) GenerateTextWithMessages(messages []Message) (string, error) {
-	// 将消息转换为单个prompt
+func (o *OllamaLLMProvider) GenerateTextWithMessages(ctx context.Context, messages []Message) (string, error) {
 	var promptBuilder strings.Builder
 	for _, msg := range messages {
 		promptBuilder.WriteString(fmt.Sprintf("%s: %s\n", msg.Role, msg.Content))
 	}
-	return o.client.GenerateText(promptBuilder.String())
+	return o.client.GenerateTextWithContext(ctx, promptBuilder.String())
 }
