@@ -23,10 +23,10 @@ import (
 	"jetwash/internal/types"
 )
 
-// generateCacheKey 生成缓存键（使用 SHA256 哈希）
-func generateCacheKey(tenantID uuid.UUID, text string) string {
+// generateCacheKey 生成缓存键（使用 SHA256 哈希，包含 mode 避免不同模式缓存冲突）
+func generateCacheKey(tenantID uuid.UUID, mode string, text string) string {
 	hash := sha256.Sum256([]byte(text))
-	return fmt.Sprintf("detection:%s:%s", tenantID, hex.EncodeToString(hash[:]))
+	return fmt.Sprintf("detection:%s:%s:%s", tenantID, mode, hex.EncodeToString(hash[:]))
 }
 
 // DefaultOrchestratorConfig 默认编排配置
@@ -41,9 +41,9 @@ func DefaultOrchestratorConfig() *types.OrchestratorConfig {
 		Layer2Threshold:            0.3,
 		Layer2Limit:                10,
 		Layer3EnableReason:         true,
-		EnableFastPass:             true, // 默认开启非敏感词快速放行
-		Layer3TimeoutMs:            3000, // LLM 推理超时 3 秒，超时后降级为规则判断
-		EnableAsyncLLM:             true, // 默认开启异步 LLM 审核（通过 Redis Stream）
+		EnableFastPass:             true,  // 默认开启非敏感词快速放行
+		Layer3TimeoutMs:            30000, // LLM 推理超时 30 秒，超时后降级为规则判断
+		EnableAsyncLLM:             true,  // 默认开启异步 LLM 审核（通过 Redis Stream）
 	}
 }
 
@@ -114,7 +114,7 @@ func NewOrchestrator(
 		detectionHistoryService: detectionHistoryService,
 		redisClient:             redisClient,
 		logger:                  logger,
-		historyChan:             make(chan *asyncTask, 1000), // 带缓冲 channel，避免阻塞发送方
+		historyChan:             make(chan *asyncTask, 10000), // 带缓冲 channel，避免阻塞发送方
 	}
 	// 启动后台 worker 消费异步任务（检测历史写入、缓存写入等）
 	go o.asyncWorker()
@@ -147,7 +147,7 @@ func (o *orchestrator) asyncWorker() {
 
 		// 3. 异步写入缓存结果
 		if o.redisClient != nil {
-			cacheKey := generateCacheKey(task.tenantID, task.text)
+			cacheKey := generateCacheKey(task.tenantID, task.mode, task.text)
 			if cachedResult, err := json.Marshal(task.result); err == nil {
 				ttl := o.getCacheTTL(task.result)
 				if err := o.redisClient.Set(context.Background(), cacheKey, cachedResult, ttl); err != nil {
@@ -186,9 +186,21 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 		return nil, fmt.Errorf("text cannot be empty")
 	}
 
+	// 计算检测模式
+	mode := "standard"
+	if config != nil {
+		if config.EnableLayer1 && config.EnableLayer2 && config.EnableLayer3 {
+			mode = "full"
+		} else if config.EnableLayer1 && !config.EnableLayer2 && !config.EnableLayer3 {
+			mode = "layer1_only"
+		} else if config.EnableLayer1 && config.EnableLayer2 && !config.EnableLayer3 {
+			mode = "layer1_layer2"
+		}
+	}
+
 	// 尝试从缓存获取结果
 	if o.redisClient != nil {
-		cacheKey := generateCacheKey(tenantID, text)
+		cacheKey := generateCacheKey(tenantID, mode, text)
 		cachedResult, err := o.redisClient.GetWithRefresh(context.Background(), cacheKey, 1*time.Hour)
 		if err == nil {
 			if o.logger != nil {
@@ -211,16 +223,6 @@ func (o *orchestrator) CheckTextWithConfigAndContext(tenantID uuid.UUID, text st
 	}
 
 	startTime := time.Now()
-	mode := "standard"
-	if config != nil {
-		if config.EnableLayer1 && config.EnableLayer2 && config.EnableLayer3 {
-			mode = "full"
-		} else if config.EnableLayer1 && !config.EnableLayer2 && !config.EnableLayer3 {
-			mode = "layer1_only"
-		} else if config.EnableLayer1 && config.EnableLayer2 && !config.EnableLayer3 {
-			mode = "layer1_layer2"
-		}
-	}
 
 	result := &types.OrchestratorResult{
 		Passed:       true,
@@ -810,20 +812,22 @@ func (o *orchestrator) addDetectedWordsToRedis(tenantID uuid.UUID, words []strin
 
 	ctx := context.Background()
 
-	// 更新敏感词列表缓存
+	cleanedWords := make([]interface{}, 0, len(words))
 	for _, wordText := range words {
 		wordText = strings.TrimSpace(wordText)
 		if wordText == "" {
 			continue
 		}
-
-		// 添加到敏感词集合
-		sensitiveWordsKey := fmt.Sprintf("sensitive_words:%s", tenantID)
-		o.redisClient.SAdd(ctx, sensitiveWordsKey, wordText)
-
-		// 设置过期时间为7天（与数据库同步频率一致）
-		o.redisClient.Expire(ctx, sensitiveWordsKey, 7*24*time.Hour)
+		cleanedWords = append(cleanedWords, wordText)
 	}
+
+	if len(cleanedWords) == 0 {
+		return
+	}
+
+	sensitiveWordsKey := fmt.Sprintf("sensitive_words:%s", tenantID)
+	o.redisClient.SAdd(ctx, sensitiveWordsKey, cleanedWords...)
+	o.redisClient.Expire(ctx, sensitiveWordsKey, 7*24*time.Hour)
 }
 
 // getCacheTTL 根据检测结果的风险等级返回合适的缓存过期时间
