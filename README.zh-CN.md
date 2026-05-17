@@ -40,15 +40,18 @@ Jetwash 是一个基于 Go 语言开发的多租户敏感词与文本风控 SaaS
 
 #### Layer 3: 推理层
 - 基于 LLM 的智能推理
+- **结构化 JSON 输出**：LLM 返回 JSON 格式，解析失败自动回退到文本解析
 - Prompt 组合和上下文管理
 - 风险评估和建议生成
 - 支持本地（Ollama）和云端 LLM 提供者
 - **自动学习**：LLM 检测到违禁词时自动添加到敏感词库和 AC 自动机（增量更新，延迟 < 1ms）
+- **LLM 可观测性**：Prometheus 指标（延迟、Token 用量、请求计数）
 
 ### ⚡ 性能优化
 
 #### Redis 缓存层
 - 检测结果缓存（TTL: 1小时）
+- **Embedding 缓存**：相同文本的向量化结果缓存 24 小时，减少 API 调用
 - 减少重复文本的计算开销
 - 支持租户级别的缓存隔离
 
@@ -87,6 +90,13 @@ Jetwash 是一个基于 Go 语言开发的多租户敏感词与文本风控 SaaS
 - 多租户数据隔离
 - 基于角色的访问控制
 
+### 🛡️ 工程化特性
+- **统一响应格式**：基于 `ecode` 的统一错误码和响应封装
+- **优雅关闭**：通过 context 传播取消信号，异步任务在关闭时排空
+- **可配置 CORS**：支持域名白名单的跨域配置
+- **租户级限流**：基于 Redis 滑动窗口的请求限流（429 + Retry-After）
+- **数据库迁移**：基于 golang-migrate 的版本化迁移管理
+
 ## 🛠 技术栈
 
 - **语言**: Go 1.25+
@@ -97,6 +107,9 @@ Jetwash 是一个基于 Go 语言开发的多租户敏感词与文本风控 SaaS
 - **配置管理**: Viper
 - **认证**: JWT
 - **LLM 支持**: Ollama, 在线（OpenAI 兼容 API）
+- **测试**: testify
+- **数据库迁移**: golang-migrate
+- **监控**: Prometheus + Grafana
 
 ## 📁 项目结构
 
@@ -107,9 +120,11 @@ Jetwash 是一个基于 Go 语言开发的多租户敏感词与文本风控 SaaS
 ├── internal/
 │   ├── cache/               # Redis 缓存客户端
 │   ├── config/              # Viper 配置定义
-│   ├── middleware/          # Gin 中间件（JWT 鉴权、限流）
+│   ├── metrics/             # Prometheus 指标定义
+│   ├── middleware/          # Gin 中间件（JWT 鉴权、CORS、限流）
 │   ├── models/              # GORM 数据表模型（实体）
 │   ├── repository/          # 数据库操作层
+│   ├── response/            # 统一 API 响应封装
 │   ├── handler/             # Gin 路由控制器
 │   ├── router/              # 路由配置
 │   └── service/             # 核心业务逻辑层
@@ -120,13 +135,13 @@ Jetwash 是一个基于 Go 语言开发的多租户敏感词与文本风控 SaaS
 │       ├── queue/           # 异步检测队列
 │       ├── detection_history/# 检测历史服务
 │       └── api_key/         # API 密钥管理
+├── migrations/                 # 数据库迁移文件（golang-migrate）
 ├── pkg/
 │   ├── benchmark/           # 性能测试工具
 │   └── ecode/               # 统一定义的业务错误码
 ├── docs/
 │   ├── LAYERED_ARCHITECTURE.md  # 三层架构文档
 │   └── API_DOCUMENTATION.md       # API 文档
-├── migrations/                 # 数据库迁移文件
 ├── config.yaml                # 配置文件
 ├── docker-compose.yml         # Docker 编排配置
 ├── go.mod
@@ -211,9 +226,32 @@ llm:
 jwt:
   secret: "jetwash-jwt-secret"
   expire_hour: 24
+
+cors:
+  allowed_origins: ["*"]
+
+rate_limit:
+  enabled: true
+  requests_per_minute: 60
 ```
 
-#### 4. 运行应用
+#### 4. 数据库迁移
+
+```bash
+# 安装 golang-migrate CLI
+go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+
+# 执行迁移
+make migrate-up
+
+# 回滚迁移
+make migrate-down
+
+# 创建新迁移
+make migrate-create
+```
+
+#### 5. 运行应用
 
 ```bash
 # 下载依赖
@@ -295,7 +333,7 @@ go run cmd/server/main.go
 
 - [ ] **分布式缓存** - 支持 Redis Cluster 实现高可用和水平扩展
 - [ ] **负载均衡** - 支持多后端实例和负载均衡
-- [ ] **租户级限流** - 实现租户级别的请求限流，防止滥用
+- [x] **租户级限流** - 实现租户级别的请求限流，防止滥用 ✅ 已实现
 - [ ] **连接池优化** - 优化数据库和 Redis 连接池配置
 
 ### 🔧 功能增强
@@ -317,14 +355,14 @@ go run cmd/server/main.go
 
 ### 🧪 测试与质量
 
-- [ ] **单元测试** - 所有服务的全面单元测试覆盖
+- [x] **单元测试** - 核心服务层单元测试（Layer1、Layer3、Orchestrator、Queue、Response） ✅ 已实现
 - [ ] **集成测试** - 端到端集成测试
 - [ ] **CI/CD 流水线** - 自动化测试和部署流水线
 - [ ] **性能基准测试套件** - 定期性能回归测试
 
 ### 📈 监控与可观测性
 
-- [ ] **Prometheus 指标** - 导出关键指标用于监控
+- [x] **Prometheus 指标** - LLM 调用延迟、Token 用量、请求计数，`/metrics` 端点 ✅ 已实现
 - [ ] **Grafana 仪表盘** - 实时监控可视化仪表盘
 - [ ] **分布式追踪** - 支持 OpenTelemetry 分布式追踪
 - [ ] **健康检查 API** - 为所有服务添加健康检查端点

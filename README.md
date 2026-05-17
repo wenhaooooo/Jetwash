@@ -36,15 +36,18 @@ A multi-tenant sensitive word filtering and text moderation SaaS platform built 
 
 #### Layer 3: Reasoning Layer
 - Intelligent reasoning based on LLM
+- **Structured JSON Output**: LLM returns JSON format with automatic fallback to text parsing
 - Prompt composition and context management
 - Risk assessment and suggestion generation
 - Support for both local (Ollama) and cloud LLM providers
 - **Auto-learning**: Automatically add detected sensitive words to the database and AC automaton when LLM identifies them (incremental update, < 1ms latency)
+- **LLM Observability**: Prometheus metrics (latency, token usage, request counts)
 
 ### ⚡ Performance Optimization
 
 #### Redis Cache Layer
 - Detection result caching (TTL: 1 hour)
+- **Embedding Cache**: Vector embeddings cached for 24 hours, reducing API calls
 - Reduce computational overhead for duplicate text
 - Support tenant-level cache isolation
 
@@ -83,6 +86,13 @@ A multi-tenant sensitive word filtering and text moderation SaaS platform built 
 - Multi-tenant data isolation
 - Role-based access control
 
+### 🛡️ Engineering Practices
+- **Unified Response Format**: `ecode`-based error codes with consistent API responses
+- **Graceful Shutdown**: Context propagation to async workers, channel drain on exit
+- **Configurable CORS**: Origin whitelist middleware
+- **Tenant-Level Rate Limiting**: Redis-based sliding window (429 + Retry-After)
+- **Database Migrations**: Versioned migrations with golang-migrate
+
 ## 🛠 Tech Stack
 
 - **Language**: Go 1.25+
@@ -93,6 +103,9 @@ A multi-tenant sensitive word filtering and text moderation SaaS platform built 
 - **Configuration**: Viper
 - **Authentication**: JWT
 - **LLM Support**: Ollama, Online (OpenAI-compatible APIs)
+- **Testing**: testify
+- **Database Migrations**: golang-migrate
+- **Monitoring**: Prometheus + Grafana
 
 ## 📁 Project Structure
 
@@ -103,9 +116,11 @@ A multi-tenant sensitive word filtering and text moderation SaaS platform built 
 ├── internal/
 │   ├── cache/               # Redis cache client
 │   ├── config/              # Viper configuration definitions
-│   ├── middleware/          # Gin middleware (JWT auth, rate limiting)
+│   ├── metrics/             # Prometheus metrics definitions
+│   ├── middleware/          # Gin middleware (JWT auth, CORS, rate limiting)
 │   ├── models/              # GORM data models (entities)
 │   ├── repository/          # Database operation layer
+│   ├── response/            # Unified API response helpers
 │   ├── handler/             # Gin route controllers
 │   ├── router/              # Route configuration
 │   └── service/             # Core business logic layer
@@ -116,13 +131,13 @@ A multi-tenant sensitive word filtering and text moderation SaaS platform built 
 │       ├── queue/           # Async detection queue
 │       ├── detection_history/# Detection history service
 │       └── api_key/         # API key management
+├── migrations/                 # Database migration files (golang-migrate)
 ├── pkg/
 │   ├── benchmark/           # Performance testing tool
 │   └── ecode/               # Unified business error codes
 ├── docs/
 │   ├── LAYERED_ARCHITECTURE.md  # Three-layer architecture documentation
 │   └── API_DOCUMENTATION.md       # API documentation
-├── migrations/                 # Database migration files
 ├── config.yaml                # Configuration file
 ├── docker-compose.yml         # Docker orchestration configuration
 ├── go.mod
@@ -207,9 +222,32 @@ llm:
 jwt:
   secret: "jetwash-jwt-secret"
   expire_hour: 24
+
+cors:
+  allowed_origins: ["*"]
+
+rate_limit:
+  enabled: true
+  requests_per_minute: 60
 ```
 
-#### 4. Run Application
+#### 4. Run Database Migrations
+
+```bash
+# Install golang-migrate CLI
+go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+
+# Run migrations
+make migrate-up
+
+# Rollback migrations
+make migrate-down
+
+# Create new migration
+make migrate-create
+```
+
+#### 5. Run Application
 
 ```bash
 # Download dependencies
@@ -291,7 +329,7 @@ go run cmd/server/main.go
 
 - [ ] **Distributed Cache** - Support Redis Cluster for high availability and horizontal scaling
 - [ ] **Load Balancing** - Add support for multiple backend instances with load balancing
-- [ ] **Rate Limiting per Tenant** - Implement tenant-level rate limiting to prevent abuse
+- [x] **Rate Limiting per Tenant** - Implement tenant-level rate limiting to prevent abuse ✅ Implemented
 - [ ] **Connection Pool Optimization** - Fine-tune database and Redis connection pool settings
 
 ### 🔧 Feature Enhancements
@@ -313,14 +351,14 @@ go run cmd/server/main.go
 
 ### 🧪 Testing & Quality
 
-- [ ] **Unit Tests** - Comprehensive unit test coverage for all services
+- [x] **Unit Tests** - Core service layer unit tests (Layer1, Layer3, Orchestrator, Queue, Response) ✅ Implemented
 - [ ] **Integration Tests** - End-to-end integration testing
 - [ ] **CI/CD Pipeline** - Automated testing and deployment pipeline
 - [ ] **Performance Benchmark Suite** - Regular performance regression testing
 
 ### 📈 Monitoring & Observability
 
-- [ ] **Prometheus Metrics** - Export key metrics for monitoring
+- [x] **Prometheus Metrics** - LLM call latency, token usage, request counts, `/metrics` endpoint ✅ Implemented
 - [ ] **Grafana Dashboard** - Visual dashboard for real-time monitoring
 - [ ] **Distributed Tracing** - Support OpenTelemetry for distributed tracing
 - [ ] **Health Check API** - Add health check endpoints for all services
