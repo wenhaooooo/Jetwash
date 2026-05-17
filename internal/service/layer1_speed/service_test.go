@@ -1,6 +1,7 @@
 package layer1_speed
 
 import (
+	"sync"
 	"testing"
 
 	"jetwash/internal/models"
@@ -84,6 +85,7 @@ func TestCheckText_MultipleMatches(t *testing.T) {
 	assert.True(t, result.HasMatch)
 	assert.Len(t, result.MatchedWords, 2)
 	assert.Equal(t, 4, result.RiskLevel)
+	assert.ElementsMatch(t, []string{"cat1", "cat2"}, result.Categories)
 }
 
 func TestCheckText_TenantIsolation(t *testing.T) {
@@ -115,7 +117,7 @@ func TestCheckText_TenantIsolation(t *testing.T) {
 }
 
 func TestNormalizeText(t *testing.T) {
-	svc := NewLayer1Service().(*layer1Service)
+	svc := NewLayer1Service()
 
 	tests := []struct {
 		name  string
@@ -164,6 +166,7 @@ func TestBuildAutomaton_EmptyWords(t *testing.T) {
 	svc := NewLayer1Service()
 	err := svc.BuildAutomaton(nil, nil)
 	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "words and payloads cannot be empty")
 }
 
 func TestInitialize_EmptyWords(t *testing.T) {
@@ -227,4 +230,26 @@ func TestGetMatchedWords_NoAutomaton(t *testing.T) {
 	svc := NewLayer1Service()
 	matches := svc.GetMatchedWords(uuid.New(), "some text")
 	assert.Empty(t, matches)
+}
+
+func TestCheckText_ConcurrentAccess(t *testing.T) {
+	svc := NewLayer1Service()
+	tenantID := uuid.New()
+
+	words := []models.SensitiveWord{
+		{WordText: "badword", Category: "profanity", RiskLevel: 3},
+	}
+	require.NoError(t, svc.Initialize(tenantID, words))
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err := svc.CheckText(tenantID, "this has badword in it")
+			assert.NoError(t, err)
+			assert.True(t, result.HasMatch)
+		}()
+	}
+	wg.Wait()
 }
