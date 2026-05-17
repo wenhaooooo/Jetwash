@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"jetwash/internal/metrics"
 	"jetwash/internal/util"
 
 	"github.com/google/uuid"
@@ -514,6 +515,8 @@ func (o *OnlineLLMProvider) GenerateText(ctx context.Context, prompt string) (st
 
 // GenerateTextWithMessages 使用消息列表生成文本
 func (o *OnlineLLMProvider) GenerateTextWithMessages(ctx context.Context, messages []Message) (string, error) {
+	start := time.Now()
+
 	reqBody := struct {
 		Model       string    `json:"model"`
 		Messages    []Message `json:"messages"`
@@ -530,11 +533,17 @@ func (o *OnlineLLMProvider) GenerateTextWithMessages(ctx context.Context, messag
 
 	data, err := json.Marshal(reqBody)
 	if err != nil {
+		duration := time.Since(start).Seconds()
+		metrics.LLMLatency.WithLabelValues(o.Model, "error").Observe(duration)
+		metrics.LLMRequests.WithLabelValues(o.Model, "error").Inc()
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", o.BaseURL+"/chat/completions", bytes.NewBuffer(data))
 	if err != nil {
+		duration := time.Since(start).Seconds()
+		metrics.LLMLatency.WithLabelValues(o.Model, "error").Observe(duration)
+		metrics.LLMRequests.WithLabelValues(o.Model, "error").Inc()
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -543,6 +552,9 @@ func (o *OnlineLLMProvider) GenerateTextWithMessages(ctx context.Context, messag
 
 	resp, err := o.httpClient.Do(req)
 	if err != nil {
+		duration := time.Since(start).Seconds()
+		metrics.LLMLatency.WithLabelValues(o.Model, "error").Observe(duration)
+		metrics.LLMRequests.WithLabelValues(o.Model, "error").Inc()
 		return "", fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -551,14 +563,37 @@ func (o *OnlineLLMProvider) GenerateTextWithMessages(ctx context.Context, messag
 		Choices []struct {
 			Message Message `json:"message"`
 		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
+		duration := time.Since(start).Seconds()
+		metrics.LLMLatency.WithLabelValues(o.Model, "error").Observe(duration)
+		metrics.LLMRequests.WithLabelValues(o.Model, "error").Inc()
 		return "", fmt.Errorf("failed to decode response: %w", err)
 	}
 
 	if len(respBody.Choices) == 0 {
+		duration := time.Since(start).Seconds()
+		metrics.LLMLatency.WithLabelValues(o.Model, "error").Observe(duration)
+		metrics.LLMRequests.WithLabelValues(o.Model, "error").Inc()
 		return "", fmt.Errorf("no response from zhipu api")
+	}
+
+	// Record success metrics
+	duration := time.Since(start).Seconds()
+	metrics.LLMLatency.WithLabelValues(o.Model, "success").Observe(duration)
+	metrics.LLMRequests.WithLabelValues(o.Model, "success").Inc()
+
+	if respBody.Usage.PromptTokens > 0 {
+		metrics.LLMTokens.WithLabelValues(o.Model, "prompt").Add(float64(respBody.Usage.PromptTokens))
+	}
+	if respBody.Usage.CompletionTokens > 0 {
+		metrics.LLMTokens.WithLabelValues(o.Model, "completion").Add(float64(respBody.Usage.CompletionTokens))
 	}
 
 	return respBody.Choices[0].Message.Content, nil

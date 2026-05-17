@@ -10,6 +10,7 @@ import (
 	"jetwash/internal/repository"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 )
 
@@ -44,6 +45,9 @@ func SetupRouter(cfg *config.Config, tenantRepo repository.TenantRepository, orc
 
 	// 添加恢复中间件
 	router.Use(gin.Recovery())
+
+	// Prometheus metrics endpoint
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	// 健康检查接口（无需鉴权）
 	router.GET("/health", orchestratorHandler.HealthCheck)
