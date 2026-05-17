@@ -60,14 +60,17 @@ lint:
 	golangci-lint run
 
 # 数据库迁移
-migrate-up:
-	@echo "Running database migrations..."
-	go run $(CMD_DIR)/main.go -config $(CONFIG_FILE) migrate up
+MIGRATE_CMD=migrate -path migrations -database "postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=$(DB_SSLMODE)"
 
-# 数据库回滚
+migrate-up:
+	$(MIGRATE_CMD) up
+
 migrate-down:
-	@echo "Rolling back database migrations..."
-	go run $(CMD_DIR)/main.go -config $(CONFIG_FILE) migrate down
+	$(MIGRATE_CMD) down
+
+migrate-create:
+	@read -p "Migration name: " name; \
+	migrate create -ext sql -dir migrations -seq $$name
 
 # Docker 构建
 docker-build:
@@ -94,6 +97,7 @@ help:
 	@echo "  lint          - Run linter"
 	@echo "  migrate-up    - Run database migrations"
 	@echo "  migrate-down  - Rollback database migrations"
+	@echo "  migrate-create - Create a new migration"
 	@echo "  docker-build  - Build Docker image"
 	@echo "  docker-run    - Run Docker container"
 	@echo "  help          - Show this help message"
