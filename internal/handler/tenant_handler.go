@@ -74,14 +74,14 @@ func (h *TenantHandler) CreateTenant(c *gin.Context) {
 	// 检查租户名称是否已存在
 	existingTenant, err := h.tenantRepo.GetTenantByName(req.Name)
 	if err == nil && existingTenant != nil {
-		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Tenant name already exists")
+		response.ErrorWithMessage(c, ecode.ErrConflict, "Tenant name already exists")
 		return
 	}
 
 	// 检查邮箱是否已存在
 	existingTenant, err = h.tenantRepo.GetTenantByEmail(req.Email)
 	if err == nil && existingTenant != nil {
-		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Email already exists")
+		response.ErrorWithMessage(c, ecode.ErrConflict, "Email already exists")
 		return
 	}
 
@@ -182,7 +182,7 @@ func (h *TenantHandler) UpdateTenant(c *gin.Context) {
 	if req.Name != tenant.Name {
 		existingTenant, err := h.tenantRepo.GetTenantByName(req.Name)
 		if err == nil && existingTenant != nil && existingTenant.ID != id {
-			response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Tenant name already exists")
+			response.ErrorWithMessage(c, ecode.ErrConflict, "Tenant name already exists")
 			return
 		}
 	}
@@ -191,7 +191,7 @@ func (h *TenantHandler) UpdateTenant(c *gin.Context) {
 	if req.Email != tenant.Email {
 		existingTenant, err := h.tenantRepo.GetTenantByEmail(req.Email)
 		if err == nil && existingTenant != nil && existingTenant.ID != id {
-			response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Email already exists")
+			response.ErrorWithMessage(c, ecode.ErrConflict, "Email already exists")
 			return
 		}
 	}

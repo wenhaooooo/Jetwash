@@ -58,6 +58,7 @@ func TestError(t *testing.T) {
 		{"word not found", ecode.ErrWordNotFound, http.StatusNotFound},
 		{"word already exists", ecode.ErrWordAlreadyExists, http.StatusBadRequest},
 		{"text too long", ecode.ErrTextTooLong, http.StatusBadRequest},
+		{"conflict", ecode.ErrConflict, http.StatusConflict},
 		{"default to 500", ecode.New(9999, "unknown error"), http.StatusInternalServerError},
 	}
 

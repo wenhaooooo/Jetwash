@@ -13,6 +13,7 @@ const (
 	NotFound        = 1004 // 资源不存在
 	RequestTimeout  = 1005 // 请求超时
 	TooManyRequests = 1006 // 请求过于频繁
+	Conflict        = 1007 // 资源冲突
 
 	// 租户相关错误 (2000-2999)
 	TenantNotFound  = 2000 // 租户不存在
@@ -80,6 +81,7 @@ var (
 	ErrNotFound        = New(NotFound, "资源不存在")
 	ErrRequestTimeout  = New(RequestTimeout, "请求超时")
 	ErrTooManyRequests = New(TooManyRequests, "请求过于频繁")
+	ErrConflict        = New(Conflict, "资源冲突")
 
 	ErrTenantNotFound  = New(TenantNotFound, "租户不存在")
 	ErrTenantInactive  = New(TenantInactive, "租户已停用")

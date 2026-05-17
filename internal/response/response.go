@@ -71,6 +71,8 @@ func mapCodeToHTTPStatus(code int) int {
 		return http.StatusForbidden
 	case code == ecode.NotFound || code == ecode.TenantNotFound || code == ecode.WordNotFound || code == ecode.HistoryNotFound:
 		return http.StatusNotFound
+	case code == ecode.Conflict:
+		return http.StatusConflict
 	case code == ecode.InvalidParams || code == ecode.WordAlreadyExists || code == ecode.TextTooLong:
 		return http.StatusBadRequest
 	case code == ecode.TooManyRequests:
