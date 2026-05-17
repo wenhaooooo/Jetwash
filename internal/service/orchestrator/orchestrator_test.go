@@ -47,7 +47,7 @@ func TestAggregateCategories(t *testing.T) {
 		Layer2Result: &layer2_semantic.Layer2Result{Categories: []string{"violence", "spam"}},
 	}
 	categories := o.AggregateCategories(result)
-	assert.Len(t, categories, 3)
+	assert.ElementsMatch(t, []string{"profanity", "violence", "spam"}, categories)
 }
 
 func TestBuildSummary_Passed(t *testing.T) {
@@ -64,12 +64,13 @@ func TestBuildSummary_Failed(t *testing.T) {
 		RiskLevel: 4,
 		Layer1Result: &layer1_speed.Layer1Result{
 			HasMatch:     true,
-			MatchedWords: []*layer1_speed.MatchResult{{Matched: "bad"}},
+			MatchedWords: []*layer1_speed.MatchResult{{Matched: "bad", Payload: &layer1_speed.Payload{}}},
 		},
 	}
 	summary := o.BuildSummary(result)
 	assert.Contains(t, summary, "未通过")
 	assert.Contains(t, summary, "4")
+	assert.Contains(t, summary, "1") // 1 match
 }
 
 func TestGenerateCacheKey_DifferentForDifferentText(t *testing.T) {
