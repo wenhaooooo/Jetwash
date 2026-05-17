@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -314,6 +315,7 @@ func (s *layer3Service) parseLLMResponseJSON(response string) *Layer3Result {
 	}
 
 	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
+		log.Printf("WARN: JSON parsing failed for LLM response, falling back to text parsing: %v", err)
 		return s.parseLLMResponse(response)
 	}
 
@@ -323,6 +325,20 @@ func (s *layer3Service) parseLLMResponseJSON(response string) *Layer3Result {
 	result.IsApproved = parsed.IsApproved
 	result.Confidence = parsed.Confidence
 	result.Reasoning = parsed.Reasoning
+
+	// Clamp risk_level to 0-5
+	if result.RiskLevel < 0 {
+		result.RiskLevel = 0
+	} else if result.RiskLevel > 5 {
+		result.RiskLevel = 5
+	}
+
+	// Clamp confidence to 0.0-1.0
+	if result.Confidence < 0 {
+		result.Confidence = 0
+	} else if result.Confidence > 1 {
+		result.Confidence = 1
+	}
 
 	if len(parsed.DetectedWords) > 0 {
 		result.DetectedWords = make([]string, len(parsed.DetectedWords))

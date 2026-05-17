@@ -2,6 +2,7 @@ package layer3_reason
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -220,26 +221,13 @@ func TestGeneratePrompt_RequestsJSONFormat(t *testing.T) {
 	svc := NewLayer3Service(&mockLLMProvider{})
 	prompt := svc.GeneratePrompt(uuid.New(), "测试文本", nil, nil)
 
-	if !contains(prompt, "JSON") {
+	if !strings.Contains(prompt, "JSON") {
 		t.Error("Prompt should request JSON format")
 	}
-	if !contains(prompt, "risk_level") {
+	if !strings.Contains(prompt, "risk_level") {
 		t.Error("Prompt should contain risk_level field example")
 	}
-	if !contains(prompt, "```json") {
+	if !strings.Contains(prompt, "```json") {
 		t.Error("Prompt should contain json code block")
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
