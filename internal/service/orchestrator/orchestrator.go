@@ -98,6 +98,7 @@ type layer1_cache_entry struct {
 
 // NewOrchestrator 创建编排器实例
 func NewOrchestrator(
+	ctx context.Context,
 	layer1Service layer1_speed.Layer1Service,
 	layer2Service layer2_semantic.Layer2Service,
 	layer3Service layer3_reason.Layer3Service,
@@ -117,46 +118,67 @@ func NewOrchestrator(
 		historyChan:             make(chan *asyncTask, 10000), // 带缓冲 channel，避免阻塞发送方
 	}
 	// 启动后台 worker 消费异步任务（检测历史写入、缓存写入等）
-	go o.asyncWorker()
+	go o.asyncWorker(ctx)
 	return o
 }
 
 // asyncWorker 后台 worker，异步消费检测历史写入和缓存写入任务
 // 将 DB 写入从请求关键路径中剥离，避免阻塞检测响应
-func (o *orchestrator) asyncWorker() {
-	for task := range o.historyChan {
-		// 1. 异步写入检测历史（DB 事务）
-		if o.detectionHistoryService != nil {
-			if err := o.detectionHistoryService.SaveDetectionHistory(
-				task.tenantID, task.text, task.mode, task.result, task.duration,
-			); err != nil {
-				if o.logger != nil {
-					o.logger.Warn("Failed to save detection history (async)",
-						zap.String("tenantID", task.tenantID.String()),
-						zap.Int("textLength", len(task.text)),
-						zap.Error(err))
+func (o *orchestrator) asyncWorker(ctx context.Context) {
+	for {
+		select {
+		case task := <-o.historyChan:
+			o.processAsyncTask(task)
+		case <-ctx.Done():
+			// Drain remaining tasks
+			for {
+				select {
+				case task := <-o.historyChan:
+					o.processAsyncTask(task)
+				default:
+					if o.logger != nil {
+						o.logger.Info("Async worker stopped")
+					}
+					return
 				}
 			}
 		}
+	}
+}
 
-		// 2. 异步写入新检测到的违禁词到 DB 和 Redis
-		if len(task.newlyDetectedWords) > 0 {
-			o.addDetectedWordsToDatabase(task.tenantID, task.newlyDetectedWords)
-			o.addDetectedWordsToRedis(task.tenantID, task.newlyDetectedWords)
+// processAsyncTask 处理单个异步任务（检测历史写入、新词入库、缓存写入）
+func (o *orchestrator) processAsyncTask(task *asyncTask) {
+	// 1. 异步写入检测历史（DB 事务）
+	if o.detectionHistoryService != nil {
+		if err := o.detectionHistoryService.SaveDetectionHistory(
+			task.tenantID, task.text, task.mode, task.result, task.duration,
+		); err != nil {
+			if o.logger != nil {
+				o.logger.Warn("Failed to save detection history (async)",
+					zap.String("tenantID", task.tenantID.String()),
+					zap.Int("textLength", len(task.text)),
+					zap.Error(err))
+			}
 		}
+	}
 
-		// 3. 异步写入缓存结果
-		if o.redisClient != nil {
-			cacheKey := generateCacheKey(task.tenantID, task.mode, task.text)
-			if cachedResult, err := json.Marshal(task.result); err == nil {
-				ttl := o.getCacheTTL(task.result)
-				if err := o.redisClient.Set(context.Background(), cacheKey, cachedResult, ttl); err != nil {
-					if o.logger != nil {
-						o.logger.Warn("Failed to cache detection result (async)",
-							zap.String("tenantID", task.tenantID.String()),
-							zap.String("cacheKey", cacheKey),
-							zap.Error(err))
-					}
+	// 2. 异步写入新检测到的违禁词到 DB 和 Redis
+	if len(task.newlyDetectedWords) > 0 {
+		o.addDetectedWordsToDatabase(task.tenantID, task.newlyDetectedWords)
+		o.addDetectedWordsToRedis(task.tenantID, task.newlyDetectedWords)
+	}
+
+	// 3. 异步写入缓存结果
+	if o.redisClient != nil {
+		cacheKey := generateCacheKey(task.tenantID, task.mode, task.text)
+		if cachedResult, err := json.Marshal(task.result); err == nil {
+			ttl := o.getCacheTTL(task.result)
+			if err := o.redisClient.Set(context.Background(), cacheKey, cachedResult, ttl); err != nil {
+				if o.logger != nil {
+					o.logger.Warn("Failed to cache detection result (async)",
+						zap.String("tenantID", task.tenantID.String()),
+						zap.String("cacheKey", cacheKey),
+						zap.Error(err))
 				}
 			}
 		}

@@ -99,32 +99,41 @@ func (q *queueService) Dequeue(ctx context.Context) (*DetectionTask, error) {
 // Process 处理任务
 func (q *queueService) Process(ctx context.Context, orchestrator orchestrator.Orchestrator) error {
 	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		task, err := q.Dequeue(ctx)
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			log.Printf("Error dequeuing task: %v", err)
 			time.Sleep(1 * time.Second)
 			continue
 		}
-		
+
 		log.Printf("Processing task: %s", task.ID)
-		
+
 		// 执行检测
 		result, err := orchestrator.CheckTextWithConfig(task.TenantID, task.Text, task.Config)
-		
+
 		// 保存结果
 		detectionResult := &DetectionResult{
 			TaskID:      task.ID,
 			Result:      result,
 			CompletedAt: time.Now(),
 		}
-		
+
 		if err != nil {
 			detectionResult.Error = err.Error()
 			log.Printf("Error processing task %s: %v", task.ID, err)
 		} else {
 			log.Printf("Task %s completed successfully", task.ID)
 		}
-		
+
 		if err := q.SaveResult(ctx, detectionResult); err != nil {
 			log.Printf("Error saving result: %v", err)
 		}

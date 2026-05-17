@@ -110,19 +110,23 @@ func main() {
 		layer3Service = layer3_reason.NewLayer3Service(onlineLLMProvider)
 	}
 
+	// Create cancellable context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// 初始化 Orchestrator: 编排层
-	orchestratorService := orchestrator.NewOrchestrator(layer1Service, layer2Service, layer3Service, wordRepo, detectionHistoryService, redisClient, logger.GetLogger())
+	orchestratorService := orchestrator.NewOrchestrator(ctx, layer1Service, layer2Service, layer3Service, wordRepo, detectionHistoryService, redisClient, logger.GetLogger())
 
 	// 启动 LLM 异步审核 Worker（消费 Redis Stream，异步调用 LLM 推理）
 	llmReviewWorker := orchestrator.NewLLMReviewWorker(layer3Service, layer1Service, redisClient, wordRepo, logger.GetLogger())
-	go llmReviewWorker.Start(context.Background())
+	go llmReviewWorker.Start(ctx)
 
 	// 初始化队列服务
 	queueService := queue.NewQueueService(redisClient)
 
 	// 启动队列处理
 	go func() {
-		if err := queueService.Process(context.Background(), orchestratorService); err != nil {
+		if err := queueService.Process(ctx, orchestratorService); err != nil && err != context.Canceled {
 			logger.Error("Queue processing error", zap.Error(err))
 		}
 	}()
@@ -188,12 +192,15 @@ func main() {
 
 	logger.Info("Shutting down server...")
 
-	// 创建关闭上下文
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	// Cancel context first to stop async workers
+	cancel()
+
+	// Give workers time to drain
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
 
 	// 关闭 HTTP 服务器
-	if err := server.Shutdown(ctx); err != nil {
+	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Error("Server forced to shutdown", zap.Error(err))
 	}
 

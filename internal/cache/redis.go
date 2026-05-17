@@ -81,7 +81,7 @@ func (r *RedisClient) Enqueue(ctx context.Context, queueName string, task string
 }
 
 func (r *RedisClient) Dequeue(ctx context.Context, queueName string) (string, error) {
-	result, err := r.client.BRPop(ctx, 0, queueName).Result()
+	result, err := r.client.BRPop(ctx, 2*time.Second, queueName).Result()
 	if err != nil {
 		return "", err
 	}
