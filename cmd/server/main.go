@@ -87,7 +87,7 @@ func main() {
 
 	// 初始化 Layer2: 语义检索层
 	semanticRepo := layer2_semantic.NewSemanticRepository(db)
-	layer2Service := layer2_semantic.NewLayer2Service(semanticRepo, cfg)
+	layer2Service := layer2_semantic.NewLayer2Service(semanticRepo, cfg, redisClient)
 
 	// 初始化 Layer3: 推理层
 	var layer3Service layer3_reason.Layer3Service
