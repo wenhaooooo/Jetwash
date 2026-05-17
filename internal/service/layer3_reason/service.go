@@ -85,7 +85,7 @@ func (s *layer3Service) ReasonText(ctx context.Context, tenantID uuid.UUID, text
 		return nil, fmt.Errorf("failed to generate text: %w", err)
 	}
 
-	result := s.parseLLMResponse(response)
+	result := s.parseLLMResponseJSON(response)
 
 	return result, nil
 }
@@ -107,7 +107,7 @@ func (s *layer3Service) ReasonWithMatches(ctx context.Context, tenantID uuid.UUI
 		return nil, fmt.Errorf("failed to generate text: %w", err)
 	}
 
-	result := s.parseLLMResponse(response)
+	result := s.parseLLMResponseJSON(response)
 
 	return result, nil
 }
@@ -165,17 +165,20 @@ func (s *layer3Service) GeneratePrompt(tenantID uuid.UUID, text string, matches 
 
 	// 添加任务要求
 	builder.WriteString("## 任务要求\n\n")
-	builder.WriteString("请基于以上信息，对文本进行深入分析，并按照以下格式返回结果：\n\n")
-	builder.WriteString("```\n")
-	builder.WriteString("风险等级: 0-5\n")
-	builder.WriteString("是否有风险: 是/否\n")
-	builder.WriteString("风险理由: [详细说明]\n")
-	builder.WriteString("检测到的违禁词: [违禁词1, 违禁词2, ...]\n")
-	builder.WriteString("建议: [建议1, 建议2, ...]\n")
-	builder.WriteString("是否批准: 是/否\n")
-	builder.WriteString("置信度: 0.0-1.0\n")
-	builder.WriteString("推理过程: [详细推理过程]\n")
-	builder.WriteString("```\n")
+	builder.WriteString("请基于以上信息，对文本进行深入分析，以 JSON 格式返回结果。\n\n")
+	builder.WriteString("返回格式（必须是合法的 JSON，不要包含其他文字）：\n\n")
+	builder.WriteString("```json\n")
+	builder.WriteString(`{
+  "risk_level": 0,
+  "has_risk": false,
+  "risk_reason": "无风险",
+  "detected_words": [],
+  "suggestions": [],
+  "is_approved": true,
+  "confidence": 0.95,
+  "reasoning": "分析过程"
+}`)
+	builder.WriteString("\n```\n")
 
 	return builder.String()
 }
@@ -277,6 +280,57 @@ func (s *layer3Service) parseLLMResponse(response string) *Layer3Result {
 			result.Reasoning = strings.TrimPrefix(line, "推理过程:")
 			result.Reasoning = strings.TrimSpace(result.Reasoning)
 		}
+	}
+
+	return result
+}
+
+// parseLLMResponseJSON 解析 LLM JSON 响应，失败时回退到文本解析
+func (s *layer3Service) parseLLMResponseJSON(response string) *Layer3Result {
+	result := &Layer3Result{
+		HasRisk:       false,
+		RiskLevel:     0,
+		Suggestions:   make([]string, 0),
+		IsApproved:    true,
+		DetectedWords: make([]string, 0),
+	}
+
+	jsonStr := response
+	if idx := strings.Index(response, "{"); idx >= 0 {
+		if endIdx := strings.LastIndex(response, "}"); endIdx > idx {
+			jsonStr = response[idx : endIdx+1]
+		}
+	}
+
+	var parsed struct {
+		RiskLevel     int      `json:"risk_level"`
+		HasRisk       bool     `json:"has_risk"`
+		RiskReason    string   `json:"risk_reason"`
+		DetectedWords []string `json:"detected_words"`
+		Suggestions   []string `json:"suggestions"`
+		IsApproved    bool     `json:"is_approved"`
+		Confidence    float64  `json:"confidence"`
+		Reasoning     string   `json:"reasoning"`
+	}
+
+	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
+		return s.parseLLMResponse(response)
+	}
+
+	result.RiskLevel = parsed.RiskLevel
+	result.HasRisk = parsed.HasRisk
+	result.RiskReason = parsed.RiskReason
+	result.IsApproved = parsed.IsApproved
+	result.Confidence = parsed.Confidence
+	result.Reasoning = parsed.Reasoning
+
+	if len(parsed.DetectedWords) > 0 {
+		result.DetectedWords = make([]string, len(parsed.DetectedWords))
+		copy(result.DetectedWords, parsed.DetectedWords)
+	}
+	if len(parsed.Suggestions) > 0 {
+		result.Suggestions = make([]string, len(parsed.Suggestions))
+		copy(result.Suggestions, parsed.Suggestions)
 	}
 
 	return result
