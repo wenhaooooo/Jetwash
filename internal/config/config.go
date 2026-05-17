@@ -9,12 +9,19 @@ import (
 
 // Config 应用配置
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
-	Database DatabaseConfig `mapstructure:"database"`
-	LLM      LLMConfig      `mapstructure:"llm"`
-	JWT      JWTConfig      `mapstructure:"jwt"`
-	Redis    RedisConfig    `mapstructure:"redis"`
-	CORS     CORSConfig     `mapstructure:"cors"`
+	Server    ServerConfig    `mapstructure:"server"`
+	Database  DatabaseConfig  `mapstructure:"database"`
+	LLM       LLMConfig       `mapstructure:"llm"`
+	JWT       JWTConfig       `mapstructure:"jwt"`
+	Redis     RedisConfig     `mapstructure:"redis"`
+	CORS      CORSConfig      `mapstructure:"cors"`
+	RateLimit RateLimitConfig `mapstructure:"rate_limit"`
+}
+
+// RateLimitConfig 限流配置
+type RateLimitConfig struct {
+	Enabled           bool `mapstructure:"enabled"`
+	RequestsPerMinute int  `mapstructure:"requests_per_minute"`
 }
 
 // CORSConfig CORS配置
@@ -134,6 +141,10 @@ func setDefaults() {
 
 	// CORS 默认配置
 	viper.SetDefault("cors.allowed_origins", []string{"*"})
+
+	// Rate limit 默认配置
+	viper.SetDefault("rate_limit.enabled", true)
+	viper.SetDefault("rate_limit.requests_per_minute", 60)
 }
 
 // GetDSN 获取数据库连接字符串

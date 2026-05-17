@@ -141,7 +141,7 @@ func main() {
 	tenantHandler := handler.NewTenantHandler(tenantRepo)
 
 	// 创建 Gin 路由
-	ginRouter := router.SetupRouter(cfg, tenantRepo, orchestratorHandler, normalHandler, apiKeyHandler, tenantHandler)
+	ginRouter := router.SetupRouter(cfg, tenantRepo, orchestratorHandler, normalHandler, apiKeyHandler, tenantHandler, redisClient)
 
 	// 创建 HTTP 服务器
 	server := &http.Server{

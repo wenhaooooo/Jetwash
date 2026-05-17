@@ -2,6 +2,7 @@ package router
 
 import (
 	"github.com/gin-gonic/gin"
+	"jetwash/internal/cache"
 	"jetwash/internal/config"
 	"jetwash/internal/handler"
 	"jetwash/internal/middleware"
@@ -9,7 +10,7 @@ import (
 )
 
 // SetupNormalRoutes 设置普通用户路由
-func SetupNormalRoutes(router *gin.RouterGroup, handler *handler.NormalHandler, tenantRepo repository.TenantRepository, cfg *config.Config) {
+func SetupNormalRoutes(router *gin.RouterGroup, handler *handler.NormalHandler, tenantRepo repository.TenantRepository, cfg *config.Config, redisClient *cache.RedisClient) {
 	// 登录（无需鉴权）
 	normal := router.Group("/normal")
 	{
@@ -20,6 +21,9 @@ func SetupNormalRoutes(router *gin.RouterGroup, handler *handler.NormalHandler, 
 	// 停用/启用
 	status := router.Group("/normal")
 	status.Use(middleware.AuthMiddleware(tenantRepo, cfg))
+	if cfg.RateLimit.Enabled {
+		status.Use(middleware.RateLimit(redisClient, cfg.RateLimit.RequestsPerMinute))
+	}
 	{
 		status.GET("/words", handler.GetWords)                                  // 获取所有敏感词
 		status.PUT("/words/:id/status/:status", handler.UpdateStatus)           // 更新敏感词状态

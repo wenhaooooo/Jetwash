@@ -99,6 +99,11 @@ func (r *RedisClient) SMembers(ctx context.Context, key string) ([]string, error
 	return r.client.SMembers(ctx, key).Result()
 }
 
+// Incr 将 key 的值原子递增
+func (r *RedisClient) Incr(ctx context.Context, key string) (int64, error) {
+	return r.client.Incr(ctx, key).Result()
+}
+
 func (r *RedisClient) Expire(ctx context.Context, key string, expiration time.Duration) error {
 	return r.client.Expire(ctx, key, expiration).Err()
 }
