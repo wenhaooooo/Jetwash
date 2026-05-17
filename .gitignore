@@ -41,11 +41,10 @@ config.local.yaml
 *.log
 logs/
 
-# .vscode
-.vscode/
-
 # docs
 docs/*.csv
 docs/optimization/
 docs/technical-decisions/
 docs/mock-data/.worktrees/
+docs/superpowers
+docs/
