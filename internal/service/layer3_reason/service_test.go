@@ -42,7 +42,7 @@ func TestReasonText_ValidText(t *testing.T) {
 	assert.InDelta(t, 0.95, result.Confidence, 0.01)
 }
 
-func TestReasonText_WithNilContext(t *testing.T) {
+func TestReasonText_NilReasonContext(t *testing.T) {
 	mock := NewMockLLMProvider(`风险等级: 0
 是否有风险: 否
 风险理由: 无
@@ -272,6 +272,22 @@ func TestMockLLMProvider(t *testing.T) {
 	text, err = mock.GenerateTextWithMessages(context.Background(), []Message{{Role: "user", Content: "hi"}})
 	require.NoError(t, err)
 	assert.Equal(t, "test response", text)
+}
+
+func TestReasonText_LLMError(t *testing.T) {
+	mock := NewMockLLMProviderError()
+	svc := NewLayer3Service(mock)
+	_, err := svc.ReasonText(context.Background(), uuid.New(), "some text", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to generate text")
+}
+
+func TestReasonWithMatches_LLMError(t *testing.T) {
+	mock := NewMockLLMProviderError()
+	svc := NewLayer3Service(mock)
+	_, err := svc.ReasonWithMatches(context.Background(), uuid.New(), "some text", nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to generate text")
 }
 
 func TestMatchInfo_Fields(t *testing.T) {

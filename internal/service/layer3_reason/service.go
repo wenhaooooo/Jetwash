@@ -377,28 +377,6 @@ func (rc *ReasonContext) WithEnableReason(enableReason bool) *ReasonContext {
 	return rc
 }
 
-// MockLLMProvider Mock LLM 提供者（用于测试）
-type MockLLMProvider struct {
-	Response string
-}
-
-// NewMockLLMProvider 创建 Mock LLM 提供者
-func NewMockLLMProvider(response string) *MockLLMProvider {
-	return &MockLLMProvider{
-		Response: response,
-	}
-}
-
-// GenerateText 生成文本
-func (m *MockLLMProvider) GenerateText(ctx context.Context, prompt string) (string, error) {
-	return m.Response, nil
-}
-
-// GenerateTextWithMessages 使用消息列表生成文本
-func (m *MockLLMProvider) GenerateTextWithMessages(ctx context.Context, messages []Message) (string, error) {
-	return m.Response, nil
-}
-
 // OpenAILLMProvider OpenAI LLM 提供者（示例实现）
 type OpenAILLMProvider struct {
 	APIKey      string
