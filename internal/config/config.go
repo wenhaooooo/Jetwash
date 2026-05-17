@@ -14,6 +14,12 @@ type Config struct {
 	LLM      LLMConfig      `mapstructure:"llm"`
 	JWT      JWTConfig      `mapstructure:"jwt"`
 	Redis    RedisConfig    `mapstructure:"redis"`
+	CORS     CORSConfig     `mapstructure:"cors"`
+}
+
+// CORSConfig CORS配置
+type CORSConfig struct {
+	AllowedOrigins []string `mapstructure:"allowed_origins"`
 }
 
 // ServerConfig 服务器配置
@@ -125,6 +131,9 @@ func setDefaults() {
 	viper.SetDefault("redis.addr", "localhost:6379")
 	viper.SetDefault("redis.password", "")
 	viper.SetDefault("redis.db", 0)
+
+	// CORS 默认配置
+	viper.SetDefault("cors.allowed_origins", []string{"*"})
 }
 
 // GetDSN 获取数据库连接字符串

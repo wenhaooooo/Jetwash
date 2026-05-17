@@ -35,3 +35,7 @@ redis:
   addr: "localhost:16379"
   password: "jetwash-redis"
   db: 0
+
+cors:
+  allowed_origins:
+    - "*"

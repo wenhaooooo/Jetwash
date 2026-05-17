@@ -6,6 +6,7 @@ import (
 	"jetwash/internal/config"
 	"jetwash/internal/handler"
 	"jetwash/internal/logger"
+	"jetwash/internal/middleware"
 	"jetwash/internal/repository"
 
 	"github.com/gin-gonic/gin"
@@ -38,20 +39,8 @@ func SetupRouter(cfg *config.Config, tenantRepo repository.TenantRepository, orc
 		)
 	})
 
-	// 添加 CORS 中间件（可选）
-	router.Use(func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-API-Key")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-
-		c.Next()
-	})
+	// 添加 CORS 中间件
+	router.Use(middleware.CORS(cfg.CORS.AllowedOrigins))
 
 	// 添加恢复中间件
 	router.Use(gin.Recovery())
