@@ -12,11 +12,11 @@ import (
 type Response struct {
 	Code    int         `json:"code"`
 	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
+	Data    any `json:"data,omitempty"`
 }
 
 // OK 返回成功响应
-func OK(c *gin.Context, data interface{}) {
+func OK(c *gin.Context, data any) {
 	c.JSON(http.StatusOK, Response{
 		Code:    ecode.Success,
 		Message: "success",
@@ -25,7 +25,7 @@ func OK(c *gin.Context, data interface{}) {
 }
 
 // OKWithMessage 返回带自定义消息的成功响应
-func OKWithMessage(c *gin.Context, message string, data interface{}) {
+func OKWithMessage(c *gin.Context, message string, data any) {
 	c.JSON(http.StatusOK, Response{
 		Code:    ecode.Success,
 		Message: message,
@@ -34,7 +34,7 @@ func OKWithMessage(c *gin.Context, message string, data interface{}) {
 }
 
 // Created 返回创建成功响应
-func Created(c *gin.Context, data interface{}) {
+func Created(c *gin.Context, data any) {
 	c.JSON(http.StatusCreated, Response{
 		Code:    ecode.Success,
 		Message: "created",
