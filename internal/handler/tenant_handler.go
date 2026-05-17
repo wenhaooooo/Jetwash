@@ -1,13 +1,14 @@
 package handler
 
 import (
-	"net/http"
 	"strconv"
 
 	"jetwash/internal/middleware"
 	"jetwash/internal/models"
 	"jetwash/internal/repository"
+	"jetwash/internal/response"
 	"jetwash/internal/util"
+	"jetwash/pkg/ecode"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -43,10 +44,7 @@ type UpdateTenantRequest struct {
 func (h *TenantHandler) CreateTenant(c *gin.Context) {
 	var req CreateTenantRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid request: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid request: "+err.Error())
 		return
 	}
 
@@ -59,19 +57,13 @@ func (h *TenantHandler) CreateTenant(c *gin.Context) {
 			// 检查当前租户层级是否已达到5层
 			currentLevel, err := h.tenantRepo.GetTenantLevel(currentTenantID)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"code":    500,
-					"message": "Failed to check tenant level: " + err.Error(),
-				})
+				response.ErrorWithMessage(c, ecode.ErrServer, "Failed to check tenant level: "+err.Error())
 				return
 			}
 
 			// 如果当前租户层级已达到5层，不允许创建子租户
 			if currentLevel >= 4 {
-				c.JSON(http.StatusForbidden, gin.H{
-					"code":    403,
-					"message": "Cannot create tenant: maximum tenant level (5) reached",
-				})
+				response.Error(c, ecode.ErrForbidden)
 				return
 			}
 
@@ -82,30 +74,21 @@ func (h *TenantHandler) CreateTenant(c *gin.Context) {
 	// 检查租户名称是否已存在
 	existingTenant, err := h.tenantRepo.GetTenantByName(req.Name)
 	if err == nil && existingTenant != nil {
-		c.JSON(http.StatusConflict, gin.H{
-			"code":    409,
-			"message": "Tenant name already exists",
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Tenant name already exists")
 		return
 	}
 
 	// 检查邮箱是否已存在
 	existingTenant, err = h.tenantRepo.GetTenantByEmail(req.Email)
 	if err == nil && existingTenant != nil {
-		c.JSON(http.StatusConflict, gin.H{
-			"code":    409,
-			"message": "Email already exists",
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Email already exists")
 		return
 	}
 
 	// 生成密码哈希
 	hashedPassword, err := util.HashPassword(req.Password)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "Failed to hash password: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrServer, "Failed to hash password: "+err.Error())
 		return
 	}
 
@@ -122,18 +105,11 @@ func (h *TenantHandler) CreateTenant(c *gin.Context) {
 	}
 
 	if err := h.tenantRepo.CreateTenant(tenant); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "Failed to create tenant: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrServer, "Failed to create tenant: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "Success",
-		"data":    tenant,
-	})
+	response.OK(c, tenant)
 }
 
 // GetTenant 获取租户
@@ -141,27 +117,17 @@ func (h *TenantHandler) GetTenant(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid tenant id",
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid tenant id")
 		return
 	}
 
 	tenant, err := h.tenantRepo.GetTenantByID(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"code":    404,
-			"message": "Tenant not found",
-		})
+		response.Error(c, ecode.ErrNotFound)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "Success",
-		"data":    tenant,
-	})
+	response.OK(c, tenant)
 }
 
 // ListTenants 列租户
@@ -179,22 +145,15 @@ func (h *TenantHandler) ListTenants(c *gin.Context) {
 	offset := (page - 1) * pageSize
 	tenants, total, err := h.tenantRepo.ListTenants(offset, pageSize)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "Failed to list tenants: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrServer, "Failed to list tenants: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "Success",
-		"data": gin.H{
-			"tenants":   tenants,
-			"total":     total,
-			"page":      page,
-			"page_size": pageSize,
-		},
+	response.OK(c, gin.H{
+		"tenants":   tenants,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
 	})
 }
 
@@ -203,28 +162,19 @@ func (h *TenantHandler) UpdateTenant(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid tenant id",
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid tenant id")
 		return
 	}
 
 	tenant, err := h.tenantRepo.GetTenantByID(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"code":    404,
-			"message": "Tenant not found",
-		})
+		response.Error(c, ecode.ErrNotFound)
 		return
 	}
 
 	var req UpdateTenantRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid request: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid request: "+err.Error())
 		return
 	}
 
@@ -232,10 +182,7 @@ func (h *TenantHandler) UpdateTenant(c *gin.Context) {
 	if req.Name != tenant.Name {
 		existingTenant, err := h.tenantRepo.GetTenantByName(req.Name)
 		if err == nil && existingTenant != nil && existingTenant.ID != id {
-			c.JSON(http.StatusConflict, gin.H{
-				"code":    409,
-				"message": "Tenant name already exists",
-			})
+			response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Tenant name already exists")
 			return
 		}
 	}
@@ -244,10 +191,7 @@ func (h *TenantHandler) UpdateTenant(c *gin.Context) {
 	if req.Email != tenant.Email {
 		existingTenant, err := h.tenantRepo.GetTenantByEmail(req.Email)
 		if err == nil && existingTenant != nil && existingTenant.ID != id {
-			c.JSON(http.StatusConflict, gin.H{
-				"code":    409,
-				"message": "Email already exists",
-			})
+			response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Email already exists")
 			return
 		}
 	}
@@ -260,28 +204,18 @@ func (h *TenantHandler) UpdateTenant(c *gin.Context) {
 	if req.Password != "" {
 		hashedPassword, err := util.HashPassword(req.Password)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"code":    500,
-				"message": "Failed to hash password: " + err.Error(),
-			})
+			response.ErrorWithMessage(c, ecode.ErrServer, "Failed to hash password: "+err.Error())
 			return
 		}
 		tenant.Password = hashedPassword
 	}
 
 	if err := h.tenantRepo.UpdateTenant(tenant); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "Failed to update tenant: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrServer, "Failed to update tenant: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "Success",
-		"data":    tenant,
-	})
+	response.OK(c, tenant)
 }
 
 // DeleteTenant 删除租户
@@ -289,33 +223,21 @@ func (h *TenantHandler) DeleteTenant(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid tenant id",
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid tenant id")
 		return
 	}
 
 	// 检查租户是否存在
 	_, err = h.tenantRepo.GetTenantByID(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"code":    404,
-			"message": "Tenant not found",
-		})
+		response.Error(c, ecode.ErrNotFound)
 		return
 	}
 
 	if err := h.tenantRepo.DeleteTenant(id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "Failed to delete tenant: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrServer, "Failed to delete tenant: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "Success",
-	})
+	response.OK(c, nil)
 }
