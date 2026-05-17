@@ -67,7 +67,7 @@ func main() {
 	// 初始化服务
 	layer1Service := layer1_speed.NewLayer1Service()
 	semanticRepo := layer2_semantic.NewSemanticRepository(db)
-	layer2Service := layer2_semantic.NewLayer2Service(semanticRepo, cfg)
+	layer2Service := layer2_semantic.NewLayer2Service(semanticRepo, cfg, redisClient)
 
 	// 初始化LLM服务
 	var layer3Service layer3_reason.Layer3Service
@@ -88,6 +88,7 @@ func main() {
 
 	// 初始化Orchestrator
 	orchestratorService := orchestrator.NewOrchestrator(
+		context.Background(),
 		layer1Service,
 		layer2Service,
 		layer3Service,

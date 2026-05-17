@@ -44,9 +44,6 @@ logs/
 # .vscode
 .vscode/
 
-# migrations
-migrations/
-
 # docs
 docs/*.csv
 docs/optimization/

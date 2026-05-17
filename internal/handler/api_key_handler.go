@@ -1,12 +1,13 @@
 package handler
 
 import (
-	"net/http"
 	"strconv"
 	"time"
 
 	"jetwash/internal/middleware"
+	"jetwash/internal/response"
 	"jetwash/internal/service/api_key"
+	"jetwash/pkg/ecode"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -39,119 +40,78 @@ type UpdateAPIKeyRequest struct {
 func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 	tenantIDStr, exists := middleware.GetTenantID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"code":    401,
-			"message": "Unauthorized: tenant_id not found in context",
-		})
+		response.Error(c, ecode.ErrUnauthorized)
 		return
 	}
 
 	tenantID, err := uuid.Parse(tenantIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid tenant_id: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid tenant_id: "+err.Error())
 		return
 	}
 
 	var req CreateAPIKeyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid request: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid request: "+err.Error())
 		return
 	}
 
 	expiresAt, err := time.Parse(time.RFC3339, req.ExpiresAt)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid expires_at format, use RFC3339",
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid expires_at format, use RFC3339")
 		return
 	}
 
 	apiKey, err := h.apiKeyService.CreateAPIKey(tenantID, req.Name, expiresAt)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "Failed to create API key: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrServer, "Failed to create API key: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "Success",
-		"data":    apiKey,
-	})
+	response.OK(c, apiKey)
 }
 
 // GetAPIKey 获取API密钥
 func (h *APIKeyHandler) GetAPIKey(c *gin.Context) {
 	tenantIDStr, exists := middleware.GetTenantID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"code":    401,
-			"message": "Unauthorized: tenant_id not found in context",
-		})
+		response.Error(c, ecode.ErrUnauthorized)
 		return
 	}
 
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid API key id",
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid API key id")
 		return
 	}
 
 	apiKey, err := h.apiKeyService.GetAPIKeyByID(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"code":    404,
-			"message": "API key not found",
-		})
+		response.Error(c, ecode.ErrNotFound)
 		return
 	}
 
 	// 检查权限
 	if apiKey.TenantID.String() != tenantIDStr {
-		c.JSON(http.StatusForbidden, gin.H{
-			"code":    403,
-			"message": "Forbidden: API key does not belong to this tenant",
-		})
+		response.Error(c, ecode.ErrForbidden)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "Success",
-		"data":    apiKey,
-	})
+	response.OK(c, apiKey)
 }
 
 // ListAPIKeys 列API密钥
 func (h *APIKeyHandler) ListAPIKeys(c *gin.Context) {
 	tenantIDStr, exists := middleware.GetTenantID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"code":    401,
-			"message": "Unauthorized: tenant_id not found in context",
-		})
+		response.Error(c, ecode.ErrUnauthorized)
 		return
 	}
 
 	tenantID, err := uuid.Parse(tenantIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid tenant_id: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid tenant_id: "+err.Error())
 		return
 	}
 
@@ -160,22 +120,15 @@ func (h *APIKeyHandler) ListAPIKeys(c *gin.Context) {
 
 	apiKeys, total, err := h.apiKeyService.ListAPIKeys(tenantID, page, pageSize)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "Failed to list API keys: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrServer, "Failed to list API keys: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "Success",
-		"data": gin.H{
-			"api_keys": apiKeys,
-			"total":    total,
-			"page":     page,
-			"page_size": pageSize,
-		},
+	response.OK(c, gin.H{
+		"api_keys":  apiKeys,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
 	})
 }
 
@@ -183,221 +136,145 @@ func (h *APIKeyHandler) ListAPIKeys(c *gin.Context) {
 func (h *APIKeyHandler) UpdateAPIKey(c *gin.Context) {
 	tenantIDStr, exists := middleware.GetTenantID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"code":    401,
-			"message": "Unauthorized: tenant_id not found in context",
-		})
+		response.Error(c, ecode.ErrUnauthorized)
 		return
 	}
 
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid API key id",
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid API key id")
 		return
 	}
 
 	apiKey, err := h.apiKeyService.GetAPIKeyByID(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"code":    404,
-			"message": "API key not found",
-		})
+		response.Error(c, ecode.ErrNotFound)
 		return
 	}
 
 	// 检查权限
 	if apiKey.TenantID.String() != tenantIDStr {
-		c.JSON(http.StatusForbidden, gin.H{
-			"code":    403,
-			"message": "Forbidden: API key does not belong to this tenant",
-		})
+		response.Error(c, ecode.ErrForbidden)
 		return
 	}
 
 	var req UpdateAPIKeyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid request: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid request: "+err.Error())
 		return
 	}
 
 	apiKey.Name = req.Name
 	if err := h.apiKeyService.UpdateAPIKey(apiKey); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "Failed to update API key: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrServer, "Failed to update API key: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "Success",
-		"data":    apiKey,
-	})
+	response.OK(c, apiKey)
 }
 
 // DeleteAPIKey 删除API密钥
 func (h *APIKeyHandler) DeleteAPIKey(c *gin.Context) {
 	tenantIDStr, exists := middleware.GetTenantID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"code":    401,
-			"message": "Unauthorized: tenant_id not found in context",
-		})
+		response.Error(c, ecode.ErrUnauthorized)
 		return
 	}
 
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid API key id",
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid API key id")
 		return
 	}
 
 	apiKey, err := h.apiKeyService.GetAPIKeyByID(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"code":    404,
-			"message": "API key not found",
-		})
+		response.Error(c, ecode.ErrNotFound)
 		return
 	}
 
 	// 检查权限
 	if apiKey.TenantID.String() != tenantIDStr {
-		c.JSON(http.StatusForbidden, gin.H{
-			"code":    403,
-			"message": "Forbidden: API key does not belong to this tenant",
-		})
+		response.Error(c, ecode.ErrForbidden)
 		return
 	}
 
 	if err := h.apiKeyService.DeleteAPIKey(id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "Failed to delete API key: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrServer, "Failed to delete API key: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "Success",
-	})
+	response.OK(c, nil)
 }
 
 // ActivateAPIKey 激活API密钥
 func (h *APIKeyHandler) ActivateAPIKey(c *gin.Context) {
 	tenantIDStr, exists := middleware.GetTenantID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"code":    401,
-			"message": "Unauthorized: tenant_id not found in context",
-		})
+		response.Error(c, ecode.ErrUnauthorized)
 		return
 	}
 
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid API key id",
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid API key id")
 		return
 	}
 
 	apiKey, err := h.apiKeyService.GetAPIKeyByID(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"code":    404,
-			"message": "API key not found",
-		})
+		response.Error(c, ecode.ErrNotFound)
 		return
 	}
 
 	// 检查权限
 	if apiKey.TenantID.String() != tenantIDStr {
-		c.JSON(http.StatusForbidden, gin.H{
-			"code":    403,
-			"message": "Forbidden: API key does not belong to this tenant",
-		})
+		response.Error(c, ecode.ErrForbidden)
 		return
 	}
 
 	if err := h.apiKeyService.ActivateAPIKey(id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "Failed to activate API key: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrServer, "Failed to activate API key: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "Success",
-	})
+	response.OK(c, nil)
 }
 
 // DeactivateAPIKey 停用API密钥
 func (h *APIKeyHandler) DeactivateAPIKey(c *gin.Context) {
 	tenantIDStr, exists := middleware.GetTenantID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"code":    401,
-			"message": "Unauthorized: tenant_id not found in context",
-		})
+		response.Error(c, ecode.ErrUnauthorized)
 		return
 	}
 
 	idStr := c.Param("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid API key id",
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid API key id")
 		return
 	}
 
 	apiKey, err := h.apiKeyService.GetAPIKeyByID(id)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"code":    404,
-			"message": "API key not found",
-		})
+		response.Error(c, ecode.ErrNotFound)
 		return
 	}
 
 	// 检查权限
 	if apiKey.TenantID.String() != tenantIDStr {
-		c.JSON(http.StatusForbidden, gin.H{
-			"code":    403,
-			"message": "Forbidden: API key does not belong to this tenant",
-		})
+		response.Error(c, ecode.ErrForbidden)
 		return
 	}
 
 	if err := h.apiKeyService.DeactivateAPIKey(id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "Failed to deactivate API key: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrServer, "Failed to deactivate API key: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "Success",
-	})
+	response.OK(c, nil)
 }

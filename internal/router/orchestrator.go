@@ -2,6 +2,7 @@ package router
 
 import (
 	"github.com/gin-gonic/gin"
+	"jetwash/internal/cache"
 	"jetwash/internal/config"
 	"jetwash/internal/handler"
 	"jetwash/internal/middleware"
@@ -9,9 +10,12 @@ import (
 )
 
 // SetupOrchestratorRoutes 设置编排器路由
-func SetupOrchestratorRoutes(router *gin.RouterGroup, handler *handler.OrchestratorHandler, tenantRepo repository.TenantRepository, cfg *config.Config) {
+func SetupOrchestratorRoutes(router *gin.RouterGroup, handler *handler.OrchestratorHandler, tenantRepo repository.TenantRepository, cfg *config.Config, redisClient *cache.RedisClient) {
 	orchestratorGroup := router.Group("/orchestrator")
 	orchestratorGroup.Use(middleware.AuthMiddleware(tenantRepo, cfg))
+	if cfg.RateLimit.Enabled {
+		orchestratorGroup.Use(middleware.RateLimit(redisClient, cfg.RateLimit.RequestsPerMinute))
+	}
 	{
 		orchestratorGroup.POST("/check", handler.CheckText)
 		orchestratorGroup.POST("/check/config", handler.CheckTextWithConfig)

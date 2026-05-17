@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 
+	"jetwash/internal/metrics"
 	"jetwash/internal/util"
 
 	"github.com/google/uuid"
@@ -85,7 +87,7 @@ func (s *layer3Service) ReasonText(ctx context.Context, tenantID uuid.UUID, text
 		return nil, fmt.Errorf("failed to generate text: %w", err)
 	}
 
-	result := s.parseLLMResponse(response)
+	result := s.parseLLMResponseJSON(response)
 
 	return result, nil
 }
@@ -107,7 +109,7 @@ func (s *layer3Service) ReasonWithMatches(ctx context.Context, tenantID uuid.UUI
 		return nil, fmt.Errorf("failed to generate text: %w", err)
 	}
 
-	result := s.parseLLMResponse(response)
+	result := s.parseLLMResponseJSON(response)
 
 	return result, nil
 }
@@ -165,17 +167,20 @@ func (s *layer3Service) GeneratePrompt(tenantID uuid.UUID, text string, matches 
 
 	// 添加任务要求
 	builder.WriteString("## 任务要求\n\n")
-	builder.WriteString("请基于以上信息，对文本进行深入分析，并按照以下格式返回结果：\n\n")
-	builder.WriteString("```\n")
-	builder.WriteString("风险等级: 0-5\n")
-	builder.WriteString("是否有风险: 是/否\n")
-	builder.WriteString("风险理由: [详细说明]\n")
-	builder.WriteString("检测到的违禁词: [违禁词1, 违禁词2, ...]\n")
-	builder.WriteString("建议: [建议1, 建议2, ...]\n")
-	builder.WriteString("是否批准: 是/否\n")
-	builder.WriteString("置信度: 0.0-1.0\n")
-	builder.WriteString("推理过程: [详细推理过程]\n")
-	builder.WriteString("```\n")
+	builder.WriteString("请基于以上信息，对文本进行深入分析，以 JSON 格式返回结果。\n\n")
+	builder.WriteString("返回格式（必须是合法的 JSON，不要包含其他文字）：\n\n")
+	builder.WriteString("```json\n")
+	builder.WriteString(`{
+  "risk_level": 0,
+  "has_risk": false,
+  "risk_reason": "无风险",
+  "detected_words": [],
+  "suggestions": [],
+  "is_approved": true,
+  "confidence": 0.95,
+  "reasoning": "分析过程"
+}`)
+	builder.WriteString("\n```\n")
 
 	return builder.String()
 }
@@ -282,6 +287,72 @@ func (s *layer3Service) parseLLMResponse(response string) *Layer3Result {
 	return result
 }
 
+// parseLLMResponseJSON 解析 LLM JSON 响应，失败时回退到文本解析
+func (s *layer3Service) parseLLMResponseJSON(response string) *Layer3Result {
+	result := &Layer3Result{
+		HasRisk:       false,
+		RiskLevel:     0,
+		Suggestions:   make([]string, 0),
+		IsApproved:    true,
+		DetectedWords: make([]string, 0),
+	}
+
+	jsonStr := response
+	if idx := strings.Index(response, "{"); idx >= 0 {
+		if endIdx := strings.LastIndex(response, "}"); endIdx > idx {
+			jsonStr = response[idx : endIdx+1]
+		}
+	}
+
+	var parsed struct {
+		RiskLevel     int      `json:"risk_level"`
+		HasRisk       bool     `json:"has_risk"`
+		RiskReason    string   `json:"risk_reason"`
+		DetectedWords []string `json:"detected_words"`
+		Suggestions   []string `json:"suggestions"`
+		IsApproved    bool     `json:"is_approved"`
+		Confidence    float64  `json:"confidence"`
+		Reasoning     string   `json:"reasoning"`
+	}
+
+	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
+		log.Printf("WARN: JSON parsing failed for LLM response, falling back to text parsing: %v", err)
+		return s.parseLLMResponse(response)
+	}
+
+	result.RiskLevel = parsed.RiskLevel
+	result.HasRisk = parsed.HasRisk
+	result.RiskReason = parsed.RiskReason
+	result.IsApproved = parsed.IsApproved
+	result.Confidence = parsed.Confidence
+	result.Reasoning = parsed.Reasoning
+
+	// Clamp risk_level to 0-5
+	if result.RiskLevel < 0 {
+		result.RiskLevel = 0
+	} else if result.RiskLevel > 5 {
+		result.RiskLevel = 5
+	}
+
+	// Clamp confidence to 0.0-1.0
+	if result.Confidence < 0 {
+		result.Confidence = 0
+	} else if result.Confidence > 1 {
+		result.Confidence = 1
+	}
+
+	if len(parsed.DetectedWords) > 0 {
+		result.DetectedWords = make([]string, len(parsed.DetectedWords))
+		copy(result.DetectedWords, parsed.DetectedWords)
+	}
+	if len(parsed.Suggestions) > 0 {
+		result.Suggestions = make([]string, len(parsed.Suggestions))
+		copy(result.Suggestions, parsed.Suggestions)
+	}
+
+	return result
+}
+
 // MatchInfo 匹配信息
 type MatchInfo struct {
 	WordText  string  `json:"word_text"`
@@ -377,28 +448,6 @@ func (rc *ReasonContext) WithEnableReason(enableReason bool) *ReasonContext {
 	return rc
 }
 
-// MockLLMProvider Mock LLM 提供者（用于测试）
-type MockLLMProvider struct {
-	Response string
-}
-
-// NewMockLLMProvider 创建 Mock LLM 提供者
-func NewMockLLMProvider(response string) *MockLLMProvider {
-	return &MockLLMProvider{
-		Response: response,
-	}
-}
-
-// GenerateText 生成文本
-func (m *MockLLMProvider) GenerateText(ctx context.Context, prompt string) (string, error) {
-	return m.Response, nil
-}
-
-// GenerateTextWithMessages 使用消息列表生成文本
-func (m *MockLLMProvider) GenerateTextWithMessages(ctx context.Context, messages []Message) (string, error) {
-	return m.Response, nil
-}
-
 // OpenAILLMProvider OpenAI LLM 提供者（示例实现）
 type OpenAILLMProvider struct {
 	APIKey      string
@@ -466,6 +515,8 @@ func (o *OnlineLLMProvider) GenerateText(ctx context.Context, prompt string) (st
 
 // GenerateTextWithMessages 使用消息列表生成文本
 func (o *OnlineLLMProvider) GenerateTextWithMessages(ctx context.Context, messages []Message) (string, error) {
+	start := time.Now()
+
 	reqBody := struct {
 		Model       string    `json:"model"`
 		Messages    []Message `json:"messages"`
@@ -482,11 +533,17 @@ func (o *OnlineLLMProvider) GenerateTextWithMessages(ctx context.Context, messag
 
 	data, err := json.Marshal(reqBody)
 	if err != nil {
+		duration := time.Since(start).Seconds()
+		metrics.LLMLatency.WithLabelValues(o.Model, "error").Observe(duration)
+		metrics.LLMRequests.WithLabelValues(o.Model, "error").Inc()
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", o.BaseURL+"/chat/completions", bytes.NewBuffer(data))
 	if err != nil {
+		duration := time.Since(start).Seconds()
+		metrics.LLMLatency.WithLabelValues(o.Model, "error").Observe(duration)
+		metrics.LLMRequests.WithLabelValues(o.Model, "error").Inc()
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -495,6 +552,9 @@ func (o *OnlineLLMProvider) GenerateTextWithMessages(ctx context.Context, messag
 
 	resp, err := o.httpClient.Do(req)
 	if err != nil {
+		duration := time.Since(start).Seconds()
+		metrics.LLMLatency.WithLabelValues(o.Model, "error").Observe(duration)
+		metrics.LLMRequests.WithLabelValues(o.Model, "error").Inc()
 		return "", fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -503,14 +563,37 @@ func (o *OnlineLLMProvider) GenerateTextWithMessages(ctx context.Context, messag
 		Choices []struct {
 			Message Message `json:"message"`
 		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
+		duration := time.Since(start).Seconds()
+		metrics.LLMLatency.WithLabelValues(o.Model, "error").Observe(duration)
+		metrics.LLMRequests.WithLabelValues(o.Model, "error").Inc()
 		return "", fmt.Errorf("failed to decode response: %w", err)
 	}
 
 	if len(respBody.Choices) == 0 {
+		duration := time.Since(start).Seconds()
+		metrics.LLMLatency.WithLabelValues(o.Model, "error").Observe(duration)
+		metrics.LLMRequests.WithLabelValues(o.Model, "error").Inc()
 		return "", fmt.Errorf("no response from zhipu api")
+	}
+
+	// Record success metrics
+	duration := time.Since(start).Seconds()
+	metrics.LLMLatency.WithLabelValues(o.Model, "success").Observe(duration)
+	metrics.LLMRequests.WithLabelValues(o.Model, "success").Inc()
+
+	if respBody.Usage.PromptTokens > 0 {
+		metrics.LLMTokens.WithLabelValues(o.Model, "prompt").Add(float64(respBody.Usage.PromptTokens))
+	}
+	if respBody.Usage.CompletionTokens > 0 {
+		metrics.LLMTokens.WithLabelValues(o.Model, "completion").Add(float64(respBody.Usage.CompletionTokens))
 	}
 
 	return respBody.Choices[0].Message.Content, nil

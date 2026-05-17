@@ -2,7 +2,9 @@ package cache
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -81,7 +83,7 @@ func (r *RedisClient) Enqueue(ctx context.Context, queueName string, task string
 }
 
 func (r *RedisClient) Dequeue(ctx context.Context, queueName string) (string, error) {
-	result, err := r.client.BRPop(ctx, 0, queueName).Result()
+	result, err := r.client.BRPop(ctx, 2*time.Second, queueName).Result()
 	if err != nil {
 		return "", err
 	}
@@ -95,6 +97,11 @@ func (r *RedisClient) SAdd(ctx context.Context, key string, members ...interface
 
 func (r *RedisClient) SMembers(ctx context.Context, key string) ([]string, error) {
 	return r.client.SMembers(ctx, key).Result()
+}
+
+// Incr 将 key 的值原子递增
+func (r *RedisClient) Incr(ctx context.Context, key string) (int64, error) {
+	return r.client.Incr(ctx, key).Result()
 }
 
 func (r *RedisClient) Expire(ctx context.Context, key string, expiration time.Duration) error {
@@ -143,4 +150,30 @@ func (r *RedisClient) XGroupCreate(ctx context.Context, stream, group, start str
 		return nil
 	}
 	return err
+}
+
+// ========== Embedding Cache 操作 ==========
+
+// GetEmbeddingCache retrieves cached embedding
+func (r *RedisClient) GetEmbeddingCache(ctx context.Context, textHash string) ([]float32, error) {
+	key := "embed:" + textHash
+	data, err := r.client.Get(ctx, key).Bytes()
+	if err != nil {
+		return nil, err
+	}
+	floats := make([]float32, len(data)/4)
+	for i := range floats {
+		floats[i] = math.Float32frombits(binary.LittleEndian.Uint32(data[i*4:]))
+	}
+	return floats, nil
+}
+
+// SetEmbeddingCache caches embedding with 24h TTL
+func (r *RedisClient) SetEmbeddingCache(ctx context.Context, textHash string, embedding []float32) error {
+	key := "embed:" + textHash
+	data := make([]byte, len(embedding)*4)
+	for i, f := range embedding {
+		binary.LittleEndian.PutUint32(data[i*4:], math.Float32bits(f))
+	}
+	return r.client.Set(ctx, key, data, 24*time.Hour).Err()
 }

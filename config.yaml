@@ -35,3 +35,11 @@ redis:
   addr: "localhost:16379"
   password: "jetwash-redis"
   db: 0
+
+cors:
+  allowed_origins:
+    - "*"
+
+rate_limit:
+  enabled: true
+  requests_per_minute: 60

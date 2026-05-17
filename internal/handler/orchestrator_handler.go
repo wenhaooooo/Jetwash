@@ -1,17 +1,18 @@
 package handler
 
 import (
-	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
 	"jetwash/internal/middleware"
+	"jetwash/internal/response"
 	"jetwash/internal/service/detection_history"
 	"jetwash/internal/service/layer3_reason"
 	"jetwash/internal/service/orchestrator"
 	"jetwash/internal/types"
+	"jetwash/pkg/ecode"
 )
 
 // OrchestratorHandler 编排器处理器
@@ -34,42 +35,23 @@ type OrchestratorCheckTextRequest struct {
 	Mode string `json:"mode"` // 检测模式：basic, semantic, full（默认 full）
 }
 
-// OrchestratorCheckTextResponse 编排器检查文本响应
-type OrchestratorCheckTextResponse struct {
-	Code    int                       `json:"code"`
-	Message string                    `json:"message"`
-	Data    *types.OrchestratorResult `json:"data"`
-}
-
 // CheckText 检查文本（支持模式选择）
 func (h *OrchestratorHandler) CheckText(c *gin.Context) {
 	var req OrchestratorCheckTextRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, OrchestratorCheckTextResponse{
-			Code:    400,
-			Message: "Invalid request: " + err.Error(),
-			Data:    nil,
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid request: "+err.Error())
 		return
 	}
 
 	tenantIDStr, exists := middleware.GetTenantID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, OrchestratorCheckTextResponse{
-			Code:    401,
-			Message: "Unauthorized: tenant_id not found in context",
-			Data:    nil,
-		})
+		response.Error(c, ecode.ErrUnauthorized)
 		return
 	}
 
 	tenantID, err := uuid.Parse(tenantIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, OrchestratorCheckTextResponse{
-			Code:    400,
-			Message: "Invalid tenant_id: " + err.Error(),
-			Data:    nil,
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid tenant_id: "+err.Error())
 		return
 	}
 
@@ -78,19 +60,11 @@ func (h *OrchestratorHandler) CheckText(c *gin.Context) {
 
 	result, err := h.orchestrator.CheckTextWithConfig(tenantID, req.Text, config)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, OrchestratorCheckTextResponse{
-			Code:    500,
-			Message: "Failed to check text: " + err.Error(),
-			Data:    nil,
-		})
+		response.ErrorWithMessage(c, ecode.ErrServer, "Failed to check text: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, OrchestratorCheckTextResponse{
-		Code:    0,
-		Message: "Success",
-		Data:    result,
-	})
+	response.OK(c, result)
 }
 
 // buildConfigFromMode 根据模式构建检测配置
@@ -125,49 +99,29 @@ type CheckTextWithConfigRequest struct {
 func (h *OrchestratorHandler) CheckTextWithConfig(c *gin.Context) {
 	var req CheckTextWithConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, OrchestratorCheckTextResponse{
-			Code:    400,
-			Message: "Invalid request: " + err.Error(),
-			Data:    nil,
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid request: "+err.Error())
 		return
 	}
 
 	tenantIDStr, exists := middleware.GetTenantID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, OrchestratorCheckTextResponse{
-			Code:    401,
-			Message: "Unauthorized: tenant_id not found in context",
-			Data:    nil,
-		})
+		response.Error(c, ecode.ErrUnauthorized)
 		return
 	}
 
 	tenantID, err := uuid.Parse(tenantIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, OrchestratorCheckTextResponse{
-			Code:    400,
-			Message: "Invalid tenant_id: " + err.Error(),
-			Data:    nil,
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid tenant_id: "+err.Error())
 		return
 	}
 
 	result, err := h.orchestrator.CheckTextWithConfig(tenantID, req.Text, req.Config)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, OrchestratorCheckTextResponse{
-			Code:    500,
-			Message: "Failed to check text: " + err.Error(),
-			Data:    nil,
-		})
+		response.ErrorWithMessage(c, ecode.ErrServer, "Failed to check text: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, OrchestratorCheckTextResponse{
-		Code:    0,
-		Message: "Success",
-		Data:    result,
-	})
+	response.OK(c, result)
 }
 
 // CheckTextWithContextRequest 使用上下文检查文本请求
@@ -180,49 +134,29 @@ type CheckTextWithContextRequest struct {
 func (h *OrchestratorHandler) CheckTextWithContext(c *gin.Context) {
 	var req CheckTextWithContextRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, OrchestratorCheckTextResponse{
-			Code:    400,
-			Message: "Invalid request: " + err.Error(),
-			Data:    nil,
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid request: "+err.Error())
 		return
 	}
 
 	tenantIDStr, exists := middleware.GetTenantID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, OrchestratorCheckTextResponse{
-			Code:    401,
-			Message: "Unauthorized: tenant_id not found in context",
-			Data:    nil,
-		})
+		response.Error(c, ecode.ErrUnauthorized)
 		return
 	}
 
 	tenantID, err := uuid.Parse(tenantIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, OrchestratorCheckTextResponse{
-			Code:    400,
-			Message: "Invalid tenant_id: " + err.Error(),
-			Data:    nil,
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid tenant_id: "+err.Error())
 		return
 	}
 
 	result, err := h.orchestrator.CheckTextWithContext(tenantID, req.Text, req.Context)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, OrchestratorCheckTextResponse{
-			Code:    500,
-			Message: "Failed to check text: " + err.Error(),
-			Data:    nil,
-		})
+		response.ErrorWithMessage(c, ecode.ErrServer, "Failed to check text: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, OrchestratorCheckTextResponse{
-		Code:    0,
-		Message: "Success",
-		Data:    result,
-	})
+	response.OK(c, result)
 }
 
 // CheckTextWithConfigAndContextRequest 使用配置和上下文检查文本请求
@@ -236,54 +170,34 @@ type CheckTextWithConfigAndContextRequest struct {
 func (h *OrchestratorHandler) CheckTextWithConfigAndContext(c *gin.Context) {
 	var req CheckTextWithConfigAndContextRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, OrchestratorCheckTextResponse{
-			Code:    400,
-			Message: "Invalid request: " + err.Error(),
-			Data:    nil,
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid request: "+err.Error())
 		return
 	}
 
 	tenantIDStr, exists := middleware.GetTenantID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, OrchestratorCheckTextResponse{
-			Code:    401,
-			Message: "Unauthorized: tenant_id not found in context",
-			Data:    nil,
-		})
+		response.Error(c, ecode.ErrUnauthorized)
 		return
 	}
 
 	tenantID, err := uuid.Parse(tenantIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, OrchestratorCheckTextResponse{
-			Code:    400,
-			Message: "Invalid tenant_id: " + err.Error(),
-			Data:    nil,
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid tenant_id: "+err.Error())
 		return
 	}
 
 	result, err := h.orchestrator.CheckTextWithConfigAndContext(tenantID, req.Text, req.Config, req.Context)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, OrchestratorCheckTextResponse{
-			Code:    500,
-			Message: "Failed to check text: " + err.Error(),
-			Data:    nil,
-		})
+		response.ErrorWithMessage(c, ecode.ErrServer, "Failed to check text: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, OrchestratorCheckTextResponse{
-		Code:    0,
-		Message: "Success",
-		Data:    result,
-	})
+	response.OK(c, result)
 }
 
 // HealthCheck 健康检查
 func (h *OrchestratorHandler) HealthCheck(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(200, gin.H{
 		"status":  "ok",
 		"service": "orchestrator",
 	})
@@ -293,19 +207,13 @@ func (h *OrchestratorHandler) HealthCheck(c *gin.Context) {
 func (h *OrchestratorHandler) GetDetectionHistories(c *gin.Context) {
 	tenantIDStr, exists := middleware.GetTenantID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"code":    401,
-			"message": "Unauthorized: tenant_id not found in context",
-		})
+		response.Error(c, ecode.ErrUnauthorized)
 		return
 	}
 
 	tenantID, err := uuid.Parse(tenantIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid tenant_id: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid tenant_id: "+err.Error())
 		return
 	}
 
@@ -323,22 +231,15 @@ func (h *OrchestratorHandler) GetDetectionHistories(c *gin.Context) {
 
 	histories, total, err := h.detectionHistoryService.GetDetectionHistories(tenantID, offset, pageSize)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "Failed to get detection histories: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrServer, "Failed to get detection histories: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "Success",
-		"data": gin.H{
-			"histories": histories,
-			"total":     total,
-			"page":      page,
-			"page_size": pageSize,
-		},
+	response.OK(c, gin.H{
+		"histories": histories,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
 	})
 }
 
@@ -346,44 +247,28 @@ func (h *OrchestratorHandler) GetDetectionHistories(c *gin.Context) {
 func (h *OrchestratorHandler) GetDetectionHistoryByID(c *gin.Context) {
 	tenantIDStr, exists := middleware.GetTenantID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"code":    401,
-			"message": "Unauthorized: tenant_id not found in context",
-		})
+		response.Error(c, ecode.ErrUnauthorized)
 		return
 	}
 
 	tenantID, err := uuid.Parse(tenantIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid tenant_id: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid tenant_id: "+err.Error())
 		return
 	}
 
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "Invalid history id: " + err.Error(),
-		})
+		response.ErrorWithMessage(c, ecode.ErrInvalidParams, "Invalid history id: "+err.Error())
 		return
 	}
 
 	history, err := h.detectionHistoryService.GetDetectionHistoryByID(id, tenantID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"code":    404,
-			"message": "Detection history not found",
-		})
+		response.Error(c, ecode.ErrNotFound)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "Success",
-		"data":    history,
-	})
+	response.OK(c, history)
 }

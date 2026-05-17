@@ -1,13 +1,18 @@
 package layer2_semantic
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"jetwash/internal/cache"
 	"jetwash/internal/config"
 	"jetwash/internal/util"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/pgvector/pgvector-go"
+	"go.uber.org/zap"
 )
 
 // SemanticResult 语义检索结果
@@ -48,10 +53,12 @@ type Layer2Service interface {
 type layer2Service struct {
 	repo              SemanticRepository
 	embeddingProvider util.EmbeddingProvider
+	cache             *cache.RedisClient
+	logger            *zap.Logger
 }
 
 // NewLayer2Service 创建第二层服务实例
-func NewLayer2Service(repo SemanticRepository, cfg *config.Config) Layer2Service {
+func NewLayer2Service(repo SemanticRepository, cfg *config.Config, redisCache *cache.RedisClient) Layer2Service {
 	var embeddingProvider util.EmbeddingProvider
 
 	// 根据配置选择embedding提供者
@@ -76,6 +83,8 @@ func NewLayer2Service(repo SemanticRepository, cfg *config.Config) Layer2Service
 	return &layer2Service{
 		repo:              repo,
 		embeddingProvider: embeddingProvider,
+		cache:             redisCache,
+		logger:            zap.NewNop(),
 	}
 }
 
@@ -93,11 +102,33 @@ func (s *layer2Service) SemanticSearch(tenantID uuid.UUID, text string, threshol
 		return nil, fmt.Errorf("limit must be between 1 and 100")
 	}
 
-	// 获取文本向量
-	fVec, err := s.embeddingProvider.GetEmbedding(text)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get embedding: %w", err)
+	// 生成文本的 SHA256 哈希作为缓存键
+	hash := sha256.Sum256([]byte(text))
+	textHash := hex.EncodeToString(hash[:])
+
+	// 尝试从 Redis 缓存获取 embedding
+	var fVec []float32
+	ctx := context.Background()
+	cachedEmbedding, err := s.cache.GetEmbeddingCache(ctx, textHash)
+	if err == nil && len(cachedEmbedding) > 0 {
+		// 缓存命中
+		fVec = cachedEmbedding
+	} else {
+		// 缓存未命中，调用 embedding API
+		fVec, err = s.embeddingProvider.GetEmbedding(text)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get embedding: %w", err)
+		}
+		// 将结果存入缓存（异步，不阻塞主流程）
+		go func() {
+			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if cacheErr := s.cache.SetEmbeddingCache(cacheCtx, textHash, fVec); cacheErr != nil {
+				s.logger.Warn("Failed to cache embedding", zap.Error(cacheErr))
+			}
+		}()
 	}
+
 	vector := pgvector.NewVector(fVec)
 	// 使用向量进行语义检索
 	return s.SemanticSearchWithVector(tenantID, vector, threshold, limit, filters)
