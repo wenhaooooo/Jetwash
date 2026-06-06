@@ -159,6 +159,19 @@ func (tn *TextNormalizer) RemoveEmojis(text string) string {
 	return tn.emojiRegex.ReplaceAllString(text, "")
 }
 
+// ExtractEmojis 从文本中提取所有 emoji 字符
+// 在 RemoveEmojis 之前调用，用于独立检查 emoji 违规
+func (tn *TextNormalizer) ExtractEmojis(text string) []rune {
+	matches := tn.emojiRegex.FindAllString(text, -1)
+	emojis := make([]rune, 0, len(matches))
+	for _, m := range matches {
+		for _, r := range m {
+			emojis = append(emojis, r)
+		}
+	}
+	return emojis
+}
+
 func (tn *TextNormalizer) RemoveZeroWidthChars(text string) string {
 	return tn.zeroWidthRegex.ReplaceAllString(text, "")
 }

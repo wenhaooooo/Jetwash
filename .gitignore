@@ -41,6 +41,9 @@ config.local.yaml
 *.log
 logs/
 
+# Test files
+*_test.go
+
 # docs
 docs/*.csv
 docs/optimization/

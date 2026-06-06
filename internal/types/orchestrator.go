@@ -54,10 +54,6 @@ type OrchestratorConfig struct {
 	// Layer3 配置
 	Layer3EnableReason bool `json:"layer3_enable_reason"`
 
-	// 非敏感词快速放行：Layer1 无匹配时跳过 Layer2/3，直接返回通过
-	// 适用于非敏感词占绝大多数（95%+）的高并发场景，可显著降低延迟和 Embedding API 开销
-	EnableFastPass bool `json:"enable_fast_pass"`
-
 	// Layer3 超时控制（毫秒）：LLM 推理的最大允许耗时
 	// 超时后降级为基于已有匹配结果的规则判断，不阻塞请求
 	// 设为 0 表示不限制超时

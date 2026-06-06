@@ -15,6 +15,14 @@ type Payload struct {
 	RiskLevel int       `json:"risk_level"`
 }
 
+// EmojiViolation emoji 违规信息
+type EmojiViolation struct {
+	Emoji     rune   `json:"-"`        // emoji 字符本身
+	EmojiStr  string `json:"emoji"`    // emoji 字符串形式，用于 JSON 序列化
+	Category  string `json:"category"` // 违规分类
+	RiskLevel int    `json:"risk_level"` // 风险等级
+}
+
 // ACNode AC 自动机节点
 type ACNode struct {
 	children map[rune]*ACNode // 子节点

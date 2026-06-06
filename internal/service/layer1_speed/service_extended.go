@@ -52,7 +52,11 @@ type extendedLayer1Service struct {
 // NewExtendedLayer1Service 创建扩展的第一层服务实例
 func NewExtendedLayer1Service() ExtendedLayer1Service {
 	return &extendedLayer1Service{
-		layer1Service:    layer1Service{automata: make(map[string]*ACAutomaton), normalizer: NewTextNormalizer()},
+		layer1Service: layer1Service{
+			automata:       make(map[string]*ACAutomaton),
+			emojiBlacklist: make(map[string]map[rune]*EmojiViolation),
+			normalizer:     NewTextNormalizer(),
+		},
 		regexMatcher:     NewRegexMatcher(),
 		fuzzyMatcher:     NewFuzzyMatcher(),
 		multilangMatcher: NewMultiLangMatcher(),

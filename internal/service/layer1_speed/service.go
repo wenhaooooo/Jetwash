@@ -31,6 +31,12 @@ type Layer1Service interface {
 
 	// RegisterSegmenterWords 注册分词词典（用于歧义检测）
 	RegisterSegmenterWords(words []string)
+
+	// BuildEmojiBlacklist 从敏感词列表构建 emoji 黑名单
+	BuildEmojiBlacklist(tenantID uuid.UUID, words []models.SensitiveWord)
+
+	// CheckEmojiViolations 检查文本中的违规 emoji
+	CheckEmojiViolations(tenantID uuid.UUID, text string) []EmojiViolation
 }
 
 // Layer1Result 第一层结果
@@ -42,22 +48,28 @@ type Layer1Result struct {
 	Categories       []string          `json:"categories"`        // 涉及的分类
 	AmbiguousMatches []*AmbiguousMatch `json:"ambiguous_matches"` // 歧义匹配（疑似误报）
 	HasAmbiguity     bool              `json:"has_ambiguity"`     // 是否存在歧义
+
+	// Emoji 违规检测
+	EmojiViolations  []EmojiViolation `json:"emoji_violations,omitempty"` // 命中的违规 emoji 列表
+	HasEmojiViolation bool            `json:"has_emoji_violation"`        // 是否存在 emoji 违规
 }
 
 // layer1Service 第一层服务实现
 type layer1Service struct {
-	automata   map[string]*ACAutomaton // key: tenantID string
-	normalizer *TextNormalizer
-	segmenter  *WordSegmenter
-	mu         sync.RWMutex
+	automata       map[string]*ACAutomaton           // key: tenantID string
+	emojiBlacklist map[string]map[rune]*EmojiViolation // key: tenantID string, value: emoji -> violation
+	normalizer     *TextNormalizer
+	segmenter      *WordSegmenter
+	mu             sync.RWMutex
 }
 
 // NewLayer1Service 创建第一层服务实例
 func NewLayer1Service() Layer1Service {
 	return &layer1Service{
-		automata:   make(map[string]*ACAutomaton),
-		normalizer: NewTextNormalizer(),
-		segmenter:  NewWordSegmenter(),
+		automata:       make(map[string]*ACAutomaton),
+		emojiBlacklist: make(map[string]map[rune]*EmojiViolation),
+		normalizer:     NewTextNormalizer(),
+		segmenter:      NewWordSegmenter(),
 	}
 }
 
@@ -72,20 +84,23 @@ func (s *layer1Service) CheckText(tenantID uuid.UUID, text string) (*Layer1Resul
 		return nil, fmt.Errorf("text cannot be empty")
 	}
 
+	// 在规范化之前先检查 emoji 违规（规范化会删除 emoji）
+	emojiViolations := s.CheckEmojiViolations(tenantID, text)
+
 	// 获取租户的自动机
 	automaton, err := s.getAutomaton(tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get automaton: %w", err)
 	}
 
-	// 规范化文本
+	// 规范化文本（此时 emoji 已被检查过，可以安全删除）
 	normalized := s.NormalizeText(text)
 
 	// 使用 AC 自动机匹配敏感词
 	matchedWords := automaton.MatchWithTenantID(normalized, tenantID)
 
-	// 构建结果
-	result := s.buildResult(matchedWords, normalized)
+	// 构建结果（合并 emoji 违规）
+	result := s.buildResult(matchedWords, normalized, emojiViolations)
 
 	return result, nil
 }
@@ -144,20 +159,30 @@ func (s *layer1Service) NormalizeText(text string) string {
 }
 
 // buildResult 构建结果
-func (s *layer1Service) buildResult(matchedWords []*MatchResult, normalized string) *Layer1Result {
+func (s *layer1Service) buildResult(matchedWords []*MatchResult, normalized string, emojiViolations []EmojiViolation) *Layer1Result {
 	result := &Layer1Result{
-		HasMatch:     len(matchedWords) > 0,
-		MatchedWords: matchedWords,
-		Normalized:   normalized,
-		RiskLevel:    0,
-		Categories:   make([]string, 0),
+		HasMatch:         len(matchedWords) > 0,
+		MatchedWords:     matchedWords,
+		Normalized:       normalized,
+		RiskLevel:        0,
+		Categories:        make([]string, 0),
+		EmojiViolations:   emojiViolations,
+		HasEmojiViolation: len(emojiViolations) > 0,
 	}
 
-	if !result.HasMatch {
+	// 合并 emoji 违规的风险等级和分类
+	categories := make(map[string]bool)
+	for _, ev := range emojiViolations {
+		if ev.RiskLevel > result.RiskLevel {
+			result.RiskLevel = ev.RiskLevel
+		}
+		categories[ev.Category] = true
+	}
+
+	if !result.HasMatch && !result.HasEmojiViolation {
 		return result
 	}
 
-	categories := make(map[string]bool)
 	for _, match := range matchedWords {
 		if match.Payload.RiskLevel > result.RiskLevel {
 			result.RiskLevel = match.Payload.RiskLevel
@@ -204,7 +229,14 @@ func (s *layer1Service) Initialize(tenantID uuid.UUID, words []models.SensitiveW
 	}
 
 	// 构建AC自动机
-	return s.BuildAutomatonForTenant(tenantID, wordsList, payloads)
+	if err := s.BuildAutomatonForTenant(tenantID, wordsList, payloads); err != nil {
+		return err
+	}
+
+	// 构建 emoji 黑名单
+	s.BuildEmojiBlacklist(tenantID, words)
+
+	return nil
 }
 
 // getAutomaton 获取租户的自动机
@@ -259,4 +291,62 @@ func (s *layer1Service) BuildAutomatonForTenant(tenantID uuid.UUID, words []stri
 	s.mu.Unlock()
 
 	return nil
+}
+
+// BuildEmojiBlacklist 从敏感词列表中提取 emoji 字符，构建 per-tenant 的 emoji 黑名单
+// 敏感词 word_text 中如果包含 emoji 字符，该 emoji 会被视为违规内容
+func (s *layer1Service) BuildEmojiBlacklist(tenantID uuid.UUID, words []models.SensitiveWord) {
+	blacklist := make(map[rune]*EmojiViolation)
+	for _, word := range words {
+		emojis := s.normalizer.ExtractEmojis(word.WordText)
+		for _, emoji := range emojis {
+			if _, exists := blacklist[emoji]; !exists {
+				blacklist[emoji] = &EmojiViolation{
+					Emoji:     emoji,
+					EmojiStr:  string(emoji),
+					Category:  word.Category,
+					RiskLevel: word.RiskLevel,
+				}
+			}
+		}
+	}
+
+	tenantIDStr := tenantID.String()
+	s.mu.Lock()
+	s.emojiBlacklist[tenantIDStr] = blacklist
+	s.mu.Unlock()
+}
+
+// CheckEmojiViolations 检查文本中是否包含违规 emoji
+// 在文本规范化（RemoveEmojis）之前调用
+func (s *layer1Service) CheckEmojiViolations(tenantID uuid.UUID, text string) []EmojiViolation {
+	tenantIDStr := tenantID.String()
+
+	s.mu.RLock()
+	blacklist, exists := s.emojiBlacklist[tenantIDStr]
+	s.mu.RUnlock()
+
+	if !exists || len(blacklist) == 0 {
+		return nil
+	}
+
+	emojis := s.normalizer.ExtractEmojis(text)
+	if len(emojis) == 0 {
+		return nil
+	}
+
+	// 去重：同一个 emoji 只报告一次
+	seen := make(map[rune]bool)
+	violations := make([]EmojiViolation, 0)
+	for _, emoji := range emojis {
+		if seen[emoji] {
+			continue
+		}
+		seen[emoji] = true
+		if violation, hit := blacklist[emoji]; hit {
+			violations = append(violations, *violation)
+		}
+	}
+
+	return violations
 }
