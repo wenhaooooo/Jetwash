@@ -44,10 +44,5 @@ logs/
 # Test files
 *_test.go
 
-# docs
-docs/*.csv
-docs/optimization/
-docs/technical-decisions/
-docs/mock-data/.worktrees/
-docs/superpowers
-docs/
+# docs-draft 个人文档，不上传 GitHub
+docs-draft/
